@@ -1,0 +1,30 @@
+{
+  "name": "luckychip_staking",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "migrate": "truffle migrate --network testnet --reset",
+    "compile": "truffle compile --network testnet",
+    "test": "mocha",
+    "coverage": "npx builder coverage"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "3.4.1",
+    "@openzeppelin/test-helpers": "^0.5.6",
+    "@truffle/hdwallet-provider": "^1.0.21",
+    "@uniswap/v2-periphery": "^1.1.0-beta.0",
+    "chai": "^4.2.0",
+    "dotenv": "^8.2.0",
+    "ethereum-waffle": "^2.4.1",
+    "ethereumjs-util": "^6.2.0",
+    "mocha": "^6.2.2",
+    "ncp": "^2.0.0",
+    "prettier": "^1.19.1",
+    "rimraf": "^3.0.0",
+    "solc": "0.6.12",
+    "truffle-plugin-verify": "0.5.8",
+    "ts-node": "^8.5.4",
+    "typescript": "^3.7.3"
+  },
+  "license": "MIT"
+}
