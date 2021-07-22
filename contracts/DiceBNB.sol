@@ -12,7 +12,6 @@ import "./libs/IWBNB.sol";
 import "./libs/SafeBEP20.sol";
 import "./libs/ILuckyChipRouter02.sol";
 import "./libs/ILuckyChipFactory.sol";
-import "./libs/ILuckyChipPair.sol";
 import "./libs/IMasterChef.sol";
 
 contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
@@ -24,7 +23,6 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
     uint256 public netValue;
     uint256 public currentEpoch;
     uint256 public intervalBlocks;
-    uint256 public bufferBlocks;    
     uint256 public playerTimeBlocks;
     uint256 public playerEndBlock;
     uint256 public bankerTimeBlocks;
@@ -43,7 +41,7 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
     address public operatorAddress;
     address public masterChefAddress;
     address public swapPairAddress;
-	address public immutable WBNB;
+	IWBNB public WBNB;
     IBEP20 public lcToken;
     DiceToken public diceToken;    
     ILuckyChipRouter02 public swapRouter;
@@ -117,19 +115,17 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
         address _masterChefAddress,
         uint256 _masterChefBonusId,
         uint256 _intervalBlocks,
-        uint256 _bufferBlocks,
         uint256 _playerTimeBlocks,
         uint256 _bankerTimeBlocks,
         uint256 _minBetAmount,
         uint256 _feeAmount
     ) public {
-		WBNB = _WBNBAddress;
+		WBNB = IWBNB(_WBNBAddress);
         lcToken = IBEP20(_lcTokenAddress);
         diceToken = DiceToken(_diceTokenAddress);
         masterChefAddress = _masterChefAddress;
         masterChefBonusId = _masterChefBonusId;
         intervalBlocks = _intervalBlocks;
-        bufferBlocks = _bufferBlocks;
         playerTimeBlocks = _playerTimeBlocks;
         bankerTimeBlocks = _bankerTimeBlocks;
         minBetAmount = _minBetAmount;
@@ -169,12 +165,6 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
     // set interval blocks
     function setIntervalBlocks(uint256 _intervalBlocks) external onlyAdmin {
         intervalBlocks = _intervalBlocks;
-    }
-
-    // set buffer blocks
-    function setBufferBlocks(uint256 _bufferBlocks) external onlyAdmin {
-        require(_bufferBlocks <= intervalBlocks, "_bufferBlocks <= intervalBlocks");
-        bufferBlocks = _bufferBlocks;
     }
 
     // set player time blocks
@@ -263,12 +253,13 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
 
     // send bankSecret
     function sendSecret(uint256 epoch, uint256 bankSecret) public onlyOperator whenNotPaused{
-        require(rounds[epoch].lockBlock != 0, "End round after round has locked");
-        require(rounds[epoch].status == Status.Lock, "End round after round has locked");
-        require(block.number >= rounds[epoch].lockBlock, "Send secret after lockBlock");
-        require(block.number <= rounds[epoch].lockBlock.add(bufferBlocks), "Send secret within bufferBlocks");
-        require(rounds[epoch].bankSecret == 0, "Already revealed");
-        require(keccak256(abi.encodePacked(bankSecret)) == rounds[epoch].bankHash, "Bank reveal not matching commitment");
+        Round storage round = rounds[epoch];
+        require(round.lockBlock != 0, "End round after round has locked");
+        require(round.status == Status.Lock, "End round after round has locked");
+        require(block.number >= round.lockBlock, "Send secret after lockBlock");
+        require(block.number <= round.lockBlock.add(intervalBlocks), "Send secret within invervalBlocks");
+        require(round.bankSecret == 0, "Already revealed");
+        require(keccak256(abi.encodePacked(bankSecret)) == round.bankHash, "Bank reveal not matching commitment");
 
         _safeSendSecret(epoch, bankSecret);
         _calculateRewards(epoch);
@@ -278,7 +269,7 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
         Round storage round = rounds[epoch];
         round.secretSentBlock = block.number;
         round.bankSecret = bankSecret;
-        uint256 random = round.bankSecret ^ round.betUsers;
+		uint256 random = round.bankSecret ^ round.betUsers;
         round.finalNumber = uint32(random % 6);
         round.status = Status.Claimable;
 
@@ -413,8 +404,8 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
 
     // Claim all treasury to masterChef
     function claimTreasury() public onlyOperator {
-		IWBNB(WBNB).deposit{value:totalTreasuryAmount}();
-		assert(IWBNB(WBNB).transfer(address(this), totalTreasuryAmount));
+		WBNB.deposit{value:totalTreasuryAmount}();
+		assert(WBNB.transfer(address(this), totalTreasuryAmount));
         IMasterChef(masterChefAddress).updateBonus(masterChefBonusId, totalTreasuryAmount);
         emit ClaimTreasury(totalTreasuryAmount);
         totalTreasuryAmount = 0;
@@ -446,7 +437,7 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
 
     // Get the refundable stats of specific epoch and user account
     function refundable(uint256 epoch, address user) public view returns (bool) {
-        return (rounds[epoch].status != Status.Claimable) && block.number > rounds[epoch].lockBlock.add(bufferBlocks) && ledger[epoch][user].amount != 0;
+        return (rounds[epoch].status != Status.Claimable) && block.number > rounds[epoch].lockBlock.add(intervalBlocks) && ledger[epoch][user].amount != 0;
     }
 
     // Start round. Previous round n-1 must lock
@@ -468,10 +459,11 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
 
     // Lock round
     function _safeLockRound(uint256 epoch) internal {
-        require(rounds[epoch].startBlock != 0, "Lock round after round has started");
-        require(block.number >= rounds[epoch].lockBlock, "Lock round after lockBlock");
-        require(block.number <= rounds[epoch].lockBlock.add(bufferBlocks), "Lock round within bufferBlocks");
-        rounds[epoch].status = Status.Lock;
+        Round storage round = rounds[epoch];
+        require(round.startBlock != 0, "Lock round after round has started");
+        require(block.number >= round.lockBlock, "Lock round after lockBlock");
+        require(block.number <= round.lockBlock.add(intervalBlocks), "Lock round within intervalBlocks");
+        round.status = Status.Lock;
         emit LockRound(epoch, block.number);
     }
 
@@ -506,7 +498,7 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
 
         if(address(swapRouter) != address(0) && swapPairAddress != address(0)){
             address[] memory path = new address[](2);
-            path[0] = WBNB;
+            path[0] = address(WBNB);
             path[1] = address(lcToken);
             uint256 lcAmout = swapRouter.swapExactETHForTokens{value:round.bonusAmount}(0, path, address(this), block.timestamp + deadline)[1];
             round.bonusLcAmount = lcAmout;
@@ -575,12 +567,13 @@ contract DiceBNB is Ownable, ReentrancyGuard, Pausable {
 	// Update the swap router.
     function updateSwapRouter(address _router) external onlyOperator {
         swapRouter = ILuckyChipRouter02(_router);
-        swapPairAddress = ILuckyChipFactory(swapRouter.factory()).getPair(WBNB, address(lcToken));
+        swapPairAddress = ILuckyChipFactory(swapRouter.factory()).getPair(address(WBNB), address(lcToken));
         require(swapPairAddress != address(0), "DICE::updateSwapRouter: Invalid pair address.");
     }
 
 	function _safeTransferBNB(address to, uint256 value) internal {
         (bool success, ) = to.call{gas: 23000, value: value}("");
-        require(success, 'TransferHelper: ETH_TRANSFER_FAILED');
+        require(success, 'TransferHelper: BNB_TRANSFER_FAILED');
     }
+
 }
