@@ -11,7 +11,6 @@ import "./libs/IBEP20.sol";
 import "./libs/SafeBEP20.sol";
 import "./libs/ILuckyChipRouter02.sol";
 import "./libs/ILuckyChipFactory.sol";
-import "./libs/ILuckyChipPair.sol";
 import "./libs/IMasterChef.sol";
 
 contract Dice is Ownable, ReentrancyGuard, Pausable {
