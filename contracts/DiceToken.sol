@@ -2,15 +2,15 @@
 
 pragma solidity 0.6.12;
 
-import "./DiceBEP20.sol";
+import "./libs/BEP20.sol";
 import "./libs/EnumerableSet.sol";
 
 // Dice token with Governance.
-contract DiceToken is DiceBEP20 {
+contract DiceToken is BEP20 {
     using EnumerableSet for EnumerableSet.AddressSet;
     EnumerableSet.AddressSet private _minters;
 
-	constructor(string memory name, string memory symbol) public DiceBEP20(name, symbol) {}
+	constructor(string memory name, string memory symbol) public BEP20(name, symbol) {}
 
     /// @notice Creates _amount token to _to.
     function mint(address _to, uint256 _amount) external onlyMinter returns(bool) {
