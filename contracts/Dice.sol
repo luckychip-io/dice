@@ -215,11 +215,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(epoch == currentEpoch, "epoch == currentEposh");
 
         // CurrentEpoch refers to previous round (n-1)
-        _safeLockRound(currentEpoch);
+        lockRound(currentEpoch);
 
         // Increment currentEpoch to current round (n)
         currentEpoch = currentEpoch + 1;
-        _safeStartRound(currentEpoch, bankHash);
+        _startRound(currentEpoch, bankHash);
         require(rounds[currentEpoch].startBlock < playerEndBlock, "startBlock < playerEndBlock");
         require(rounds[currentEpoch].lockBlock <= playerEndBlock, "lockBlock < playerEndBlock");
     }
@@ -326,7 +326,9 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         // Round valid, claim rewards
         if (rounds[epoch].status == Status.Claimable) {
             require(claimable(epoch, msg.sender), "Not eligible for claim");
-            reward = betInfo.amount.div(uint256(betInfo.numberCount)).mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
+			uint256 singleAmount = betInfo.amount.div(uint256(betInfo.numberCount));
+            reward = singleAmount.mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
+			reward = reward.add(singleAmount);
         }
         // Round invalid, refund bet amount
         else {
@@ -435,10 +437,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         return (rounds[epoch].status != Status.Claimable) && block.number > rounds[epoch].lockBlock.add(intervalBlocks) && ledger[epoch][user].amount != 0;
     }
 
-    // Start round. Previous round n-1 must lock
-    function _safeStartRound(uint256 epoch, bytes32 bankHash) internal {
-        require(block.number >= rounds[epoch - 1].lockBlock, "Start new round after round n-1 lock");
-        _startRound(epoch, bankHash);
+    // Manual Start round. Previous round n-1 must lock
+    function manualStartRound(bytes32 bankHash) external onlyAdmin whenNotPaused {
+        require(block.number >= rounds[currentEpoch].lockBlock, "Manual start new round after current round lock");
+        currentEpoch = currentEpoch + 1;
+        _startRound(currentEpoch, bankHash);
     }
 
     function _startRound(uint256 epoch, bytes32 bankHash) internal {
@@ -454,11 +457,12 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     // Lock round
-    function _safeLockRound(uint256 epoch) internal {
-        require(rounds[epoch].startBlock != 0, "Lock round after round has started");
-        require(block.number >= rounds[epoch].lockBlock, "Lock round after lockBlock");
-        require(block.number <= rounds[epoch].lockBlock.add(intervalBlocks), "Lock round within intervalBlocks");
-        rounds[epoch].status = Status.Lock;
+    function lockRound(uint256 epoch) public whenNotPaused {
+        Round storage round = rounds[epoch];
+        require(round.startBlock != 0, "Lock round after round has started");
+        require(block.number >= round.lockBlock, "Lock round after lockBlock");
+        require(block.number <= round.lockBlock.add(intervalBlocks), "Lock round within intervalBlocks");
+        round.status = Status.Lock;
         emit LockRound(epoch, block.number);
     }
 
@@ -491,7 +495,9 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         round.treasuryAmount = treasuryAmount;
         round.bonusAmount = bonusAmount;
 
-        if(address(swapRouter) != address(0)){
+		if(address(token) == address(lcToken)){
+			round.bonusLcAmount = bonusAmount;
+		}else if(address(swapRouter) != address(0)){
             address[] memory path = new address[](2);
             path[0] = address(token);
             path[1] = address(lcToken);
@@ -526,7 +532,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         diceToken.burn(address(diceToken), _diceTokenAmount);
         uint256 tokenAmount = _diceTokenAmount.mul(netValue).div(1e12);
         bankerAmount = bankerAmount.sub(tokenAmount);
-        token.safeTransferFrom(address(this), address(msg.sender), tokenAmount);
+        token.safeTransfer(address(msg.sender), tokenAmount);
 
         emit Withdraw(msg.sender, _diceTokenAmount);
     }
