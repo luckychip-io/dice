@@ -24,6 +24,14 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
 		
         this.dice = await Dice.new(this.token.address, this.lc.address, this.diceToken.address, this.chef.address, 0, 20, 500, 600, 1, 1, { from: minter });
         await this.diceToken.addMinter(this.dice.address, { from: minter});
+
+		this.lp1 = await MockBEP20.new('LPToken', 'LP1', '10000000', { from: minter });
+		await this.lp1.transfer(carol, '100000', {from:minter});
+		await this.lp1.transfer(david, '100000', {from:minter});
+		await this.chef.add('1000', '90', this.lp1.address, true, { from: minter });
+		await this.chef.addBonus(this.token.address, { from: minter });
+		await this.lp1.approve(this.chef.address, '100000', {from:carol});
+		await this.lp1.approve(this.chef.address, '100000', {from:david});
     
     });
     it('real case', async () => {
@@ -33,6 +41,8 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
 		await this.token.approve(this.dice.address, '1000000', { from: bob });
 		await this.token.approve(this.dice.address, '1000000', { from: carol });
 		await this.token.approve(this.dice.address, '1000000', { from: david });
+		await this.chef.deposit(0, '100', AddressZero, {from:carol});
+		await this.chef.deposit(0, '200', AddressZero, {from:david});
 		await this.diceToken.approve(this.dice.address, '1000000', { from: carol });
 		await this.diceToken.approve(this.dice.address, '1000000', { from: david });
 		await this.dice.deposit(200000, {from: carol});
@@ -152,8 +162,18 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
 		await this.dice.withdraw(400000, {from: david});
         console.log('carol diceToken balance: ', (await this.diceToken.balanceOf(carol)).toString());
         console.log('david diceToken balance: ', (await this.diceToken.balanceOf(david)).toString());
-        console.log('carol balance: ', (await this.token.balanceOf(carol)).toString());
-        console.log('david balance: ', (await this.token.balanceOf(david)).toString());
+        console.log('carol token balance: ', (await this.token.balanceOf(carol)).toString());
+        console.log('david token balance: ', (await this.token.balanceOf(david)).toString());
+        console.log('carol lp1 balance: ', (await this.lp1.balanceOf(carol)).toString());
+        console.log('david lp1 balance: ', (await this.lp1.balanceOf(david)).toString());
+        console.log('chef token balance: ', (await this.token.balanceOf(this.chef.address)).toString());
+		await this.chef.withdraw(0, 100, {from: carol});
+		await this.chef.withdraw(0, 200, {from: david});
+        console.log('chef token balance: ', (await this.token.balanceOf(this.chef.address)).toString());
+        console.log('carol lp1 balance: ', (await this.lp1.balanceOf(carol)).toString());
+        console.log('david lp1 balance: ', (await this.lp1.balanceOf(david)).toString());
+        console.log('carol token balance: ', (await this.token.balanceOf(carol)).toString());
+        console.log('david token balance: ', (await this.token.balanceOf(david)).toString());
 
     });
 });
