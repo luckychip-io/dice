@@ -32,6 +32,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public minBetAmount;
     uint256 public maxBetRatio = 5;
 	uint256 public feeAmount;
+    uint256 public maxBankerAmount;
     uint256 public totalBonusAmount;
     uint256 public masterChefBonusId;
 
@@ -190,7 +191,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // End banker time
     function endBankerTime(uint256 epoch, bytes32 bankHash) external onlyAdmin whenPaused {
-        require(epoch == currentEpoch + 1, "epoch == currentEposh + 1");
+        require(epoch == currentEpoch + 1, "epoch == currentEpoch + 1");
         require(bankerAmount > 0, "Round can start only when bankerAmount > 0");
         prevBankerAmount = bankerAmount;
         _unpause();
@@ -204,7 +205,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Start the next round n, lock for round n-1
     function executeRound(uint256 epoch, bytes32 bankHash) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "epoch == currentEposh");
+        require(epoch == currentEpoch, "epoch == currentEpoch");
 
         // CurrentEpoch refers to previous round (n-1)
         lockRound(currentEpoch);
@@ -218,7 +219,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // end player time, triggers banker time
     function endPlayerTime(uint256 epoch, uint256 bankSecret) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "epoch == currentEposh");
+        require(epoch == currentEpoch, "epoch == currentEpoch");
         sendSecret(epoch, bankSecret);
         _pause();
         _updateNetValue(epoch);
@@ -228,7 +229,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // end player time without caring last round
     function endPlayerTimeImmediately(uint256 epoch) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "epoch == currentEposh");
+        require(epoch == currentEpoch, "epoch == currentEpoch");
         _pause();
         _updateNetValue(epoch);
 		_claimBonus();
@@ -572,6 +573,5 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         (bool success, ) = to.call{gas: 23000, value: value}("");
         require(success, 'TransferHelper: BNB_TRANSFER_FAILED');
     }
-
 }
 

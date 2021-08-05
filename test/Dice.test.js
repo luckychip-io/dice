@@ -3,6 +3,7 @@ const { AddressZero } = require("@ethersproject/constants")
 const { assert } = require('chai');
 const ethers = require('ethers');
 const DiceToken = artifacts.require('DiceToken');
+const LCToken = artifacts.require('LCToken');
 const Dice = artifacts.require('Dice');
 const MockBEP20 = artifacts.require('libs/MockBEP20');
 const MasterChef = artifacts.require('MasterChef');
@@ -15,15 +16,13 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
 		await this.token.transfer(carol, '1000000', {from: minter});
 		await this.token.transfer(david, '1000000', {from: minter});
 
-        this.lc = await DiceToken.new('LC Tokens', 'LC', { from: minter });
-        await this.lc.addMinter(minter, { from: minter });
+        this.lc = await LCToken.new({ from: minter});
 		this.chef = await MasterChef.new(this.lc.address, admin, refFeeAddr, '1000', '100', '900000','90000', '10000', { from: minter });	
+        await this.lc.transferOwnership(this.chef.address, { from: minter });
 
         this.diceToken = await DiceToken.new('LC Dice BPs', 'LC-DICE-WBNB', { from: minter }); 
-        await this.diceToken.addMinter(minter, { from: minter });
-		
         this.dice = await Dice.new(this.token.address, this.lc.address, this.diceToken.address, this.chef.address, 0, 20, 500, 600, 1, 1, { from: minter });
-        await this.diceToken.addMinter(this.dice.address, { from: minter});
+        await this.diceToken.transferOwnership(this.dice.address, { from: minter});
 
 		this.lp1 = await MockBEP20.new('LPToken', 'LP1', '10000000', { from: minter });
 		await this.lp1.transfer(carol, '100000', {from:minter});
