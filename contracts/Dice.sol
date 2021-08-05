@@ -3,16 +3,16 @@
 pragma solidity 0.6.12;
 
 import "@openzeppelin/contracts/math/SafeMath.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./DiceToken.sol";
+import "./DiceLimit.sol";
 import "./libs/IBEP20.sol";
 import "./libs/SafeBEP20.sol";
 import "./libs/ILuckyChipRouter02.sol";
 import "./libs/IMasterChef.sol";
 
-contract Dice is Ownable, ReentrancyGuard, Pausable {
+contract Dice is DiceLimit, ReentrancyGuard, Pausable {
     using SafeMath for uint256;
     using SafeBEP20 for IBEP20;
 
@@ -20,23 +20,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public bankerAmount;
     uint256 public netValue;
     uint256 public currentEpoch;
-    uint256 public intervalBlocks;
-    uint256 public playerTimeBlocks;
     uint256 public playerEndBlock;
-    uint256 public bankerTimeBlocks;
     uint256 public bankerEndBlock;
-    uint256 public constant TOTAL_RATE = 10000; // 100%
-    uint256 public gapRate = 500;
-    uint256 public lcBackRate = 1000; // 10% in gap
-    uint256 public bonusRate = 1000; // 10% in gap
-    uint256 public minBetAmount;
-    uint256 public maxBetRatio = 5;
-	uint256 public feeAmount;
-    uint256 public maxBankerAmount;
     uint256 public totalBonusAmount;
     uint256 public masterChefBonusId;
 
-    address public adminAddress;
     address public masterChefAddress;
     IBEP20 public token;
     IBEP20 public lcToken;
@@ -93,15 +81,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event Claim(address indexed sender, uint256 indexed currentEpoch, uint256 amount);
     event ClaimBonusLC(address indexed sender, uint256 amount);
     event ClaimBonus(uint256 amount);
-    event RatesUpdated(uint256 indexed epoch, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate);
-    event MinBetAmountUpdated(uint256 indexed epoch, uint256 minBetAmount);
-    event MaxBetRatioUpdated(uint256 indexed epoch, uint256 maxBetRatio);
-    event FeeAmountUpdated(uint256 indexed epoch, uint256 feeAmount);
     event RewardsCalculated(
         uint256 indexed epoch,
-        uint256 lcBackAmount,
-        uint256 bonusAmount,
-        uint256 swapLcAmount
+        uint256 lcbackamount,
+        uint256 bonusamount,
+        uint256 swaplcamount
     );
     event SwapRouterUpdated(address indexed router);
     event EndPlayerTime(uint256 epoch, uint256 blockNumber);
@@ -136,57 +120,10 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         _pause();
     }
 
-    modifier onlyAdmin() {
-        require(msg.sender == adminAddress, "admin: wut?");
-        _;
-    }
-
     modifier notContract() {
         require(!_isContract(msg.sender), "contract not allowed");
         require(msg.sender == tx.origin, "proxy contract not allowed");
         _;
-    }
-
-    // set admin address
-    function setAdmin(address _adminAddress) external onlyOwner {
-        require(_adminAddress != address(0), "Cannot be zero address");
-        adminAddress = _adminAddress;
-    }
-
-    // set blocks
-    function setBlocks(uint256 _intervalBlocks, uint256 _playerTimeBlocks, uint256 _bankerTimeBlocks) external onlyAdmin {
-        intervalBlocks = _intervalBlocks;
-        playerTimeBlocks = _playerTimeBlocks;
-        bankerTimeBlocks = _bankerTimeBlocks;
-    }
-
-    // set rates
-    function setRates(uint256 _gapRate, uint256 _lcBackRate, uint256 _bonusRate) external onlyAdmin {
-        require(_gapRate <= 1000, "gapRate <= 10%");
-        require(_lcBackRate.add(_bonusRate) <= TOTAL_RATE, "_lcBackRate + _bonusRate <= TOTAL_RATE");
-        gapRate = _gapRate;
-        lcBackRate = _lcBackRate;
-        bonusRate = _bonusRate;
-
-        emit RatesUpdated(currentEpoch, gapRate, lcBackRate, bonusRate);
-    }
-
-    // set minBetAmount
-    function setMinBetAmount(uint256 _minBetAmount) external onlyAdmin {
-        minBetAmount = _minBetAmount;
-        emit MinBetAmountUpdated(currentEpoch, minBetAmount);
-    }
-
-    // set maxBetRatio
-    function setMaxBetRatio(uint256 _maxBetRatio) external onlyAdmin {
-        maxBetRatio = _maxBetRatio;
-        emit MaxBetRatioUpdated(currentEpoch, maxBetRatio);
-    }
-
-    // set feeAmount
-    function setFeeAmount(uint256 _feeAmount) external onlyAdmin {
-        feeAmount = _feeAmount;
-        emit FeeAmountUpdated(currentEpoch, feeAmount);
     }
 
     // End banker time
