@@ -1,3 +1,4 @@
+const ethers = require('ethers')
 const DiceToken = artifacts.require("DiceToken")
 const Dice = artifacts.require("Dice")
 
@@ -17,7 +18,8 @@ module.exports = async function(deployer) {
 	20,
 	500,
 	600,
-	1000000000000000,
-	1000000000000000
+    ethers.utils.parseEther('0.001'),
+    ethers.utils.parseEther('0.001'),
+    ethers.utils.parseEther('300000')
 	);
 };
