@@ -46,6 +46,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
 		await this.diceToken.approve(this.dice.address, '1000000', { from: david });
 		await this.dice.deposit(200000, {from: carol});
 		await this.dice.deposit(400000, {from: david});
+		await expectRevert(this.dice.deposit(500000, {from: david}), 'maxBankerAmount Limit');
 
 		assert.equal((await this.dice.bankerAmount()).toString(), '600000');
 		assert.equal((await this.dice.canWithdrawToken(carol)).toString(), '200000');
