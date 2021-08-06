@@ -21,7 +21,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
         await this.lc.transferOwnership(this.chef.address, { from: minter });
 
         this.diceToken = await DiceToken.new('LC Dice BPs', 'LC-DICE-WBNB', { from: minter }); 
-        this.dice = await Dice.new(this.token.address, this.lc.address, this.diceToken.address, this.chef.address, 0, 20, 500, 600, 1, 1, { from: minter });
+        this.dice = await Dice.new(this.token.address, this.lc.address, this.diceToken.address, this.chef.address, 0, 20, 500, 600, 1, 1, 1000000, { from: minter });
         await this.diceToken.transferOwnership(this.dice.address, { from: minter});
 
 		this.lp1 = await MockBEP20.new('LPToken', 'LP1', '10000000', { from: minter });

@@ -3,16 +3,16 @@
 pragma solidity 0.6.12;
 
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./DiceToken.sol";
-import "./DiceLimit.sol";
 import "./libs/IBEP20.sol";
 import "./libs/SafeBEP20.sol";
 import "./libs/ILuckyChipRouter02.sol";
 import "./libs/IMasterChef.sol";
 
-contract Dice is DiceLimit, ReentrancyGuard, Pausable {
+contract Dice is Ownable, ReentrancyGuard, Pausable {
     using SafeMath for uint256;
     using SafeBEP20 for IBEP20;
 
@@ -24,7 +24,20 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
     uint256 public bankerEndBlock;
     uint256 public totalBonusAmount;
     uint256 public masterChefBonusId;
+    uint256 public intervalBlocks;
+    uint256 public playerTimeBlocks;
+    uint256 public bankerTimeBlocks;
+    uint256 public constant TOTAL_RATE = 10000; // 100%
+    uint256 public gapRate = 500;
+    uint256 public lcBackRate = 1000; // 10% in gap
+    uint256 public bonusRate = 1000; // 10% in gap
+    uint256 public minBetAmount;
+    uint256 public maxBetRatio = 5;
+    uint256 public maxExposureRatio = 300;
+    uint256 public feeAmount;
+    uint256 public maxBankerAmount;
 
+    address public adminAddress;
     address public masterChefAddress;
     IBEP20 public token;
     IBEP20 public lcToken;
@@ -74,6 +87,9 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
     mapping(address => uint256[]) public userRounds;
     mapping(address => BankerInfo) public bankerInfo;
 
+    event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate);
+    event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
+    event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxExposureRatio);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
     event LockRound(uint256 indexed epoch, uint256 blockNumber);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
@@ -104,7 +120,8 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
         uint256 _playerTimeBlocks,
         uint256 _bankerTimeBlocks,
         uint256 _minBetAmount,
-        uint256 _feeAmount
+        uint256 _feeAmount,
+        uint256 _maxBankerAmount
     ) public {
         token = IBEP20(_tokenAddress);
         lcToken = IBEP20(_lcTokenAddress);
@@ -116,6 +133,7 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
         bankerTimeBlocks = _bankerTimeBlocks;
         minBetAmount = _minBetAmount;
         feeAmount = _feeAmount;
+        maxBankerAmount = _maxBankerAmount;
         netValue = uint256(1e12);
         _pause();
     }
@@ -124,6 +142,50 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
         require(!_isContract(msg.sender), "contract not allowed");
         require(msg.sender == tx.origin, "proxy contract not allowed");
         _;
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == adminAddress, "admin: wut?");
+        _;
+    }
+
+    // set blocks
+    function setBlocks(uint256 _intervalBlocks, uint256 _playerTimeBlocks, uint256 _bankerTimeBlocks) external onlyAdmin {
+        intervalBlocks = _intervalBlocks;
+        playerTimeBlocks = _playerTimeBlocks;
+        bankerTimeBlocks = _bankerTimeBlocks;
+    }
+
+    // set rates
+    function setRates(uint256 _gapRate, uint256 _lcBackRate, uint256 _bonusRate) external onlyAdmin {
+        require(_gapRate <= 1000, "gapRate <= 10%");
+        require(_lcBackRate.add(_bonusRate) <= TOTAL_RATE, "_lcBackRate + _bonusRate <= TOTAL_RATE");
+        gapRate = _gapRate;
+        lcBackRate = _lcBackRate;
+        bonusRate = _bonusRate;
+
+        emit RatesUpdated(block.number, gapRate, lcBackRate, bonusRate);
+    }
+
+    // set amounts
+    function setAmounts(uint256 _minBetAmount, uint256 _feeAmount, uint256 _maxBankerAmount) external onlyAdmin {
+        minBetAmount = _minBetAmount;
+        feeAmount = _feeAmount;
+        maxBankerAmount = _maxBankerAmount;
+        emit AmountsUpdated(block.number, minBetAmount, feeAmount, maxBankerAmount);
+    }
+
+    // set ratios
+    function setRatios(uint256 _maxBetRatio, uint256 _maxExposureRatio) external onlyAdmin {
+        maxBetRatio = _maxBetRatio;
+        maxExposureRatio = _maxExposureRatio;
+        emit RatiosUpdated(block.number, maxBetRatio, maxExposureRatio);
+    }
+
+    // set admin address
+    function setAdmin(address _adminAddress) external onlyOwner {
+        require(_adminAddress != address(0), "Cannot be zero address");
+        adminAddress = _adminAddress;
     }
 
     // End banker time
@@ -212,14 +274,22 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
         require(block.number > round.startBlock && block.number < round.lockBlock, "Round not bettable");
         require(ledger[currentEpoch][msg.sender].amount == 0, "Bet once per round");
         uint16 numberCount = 0;
+        uint256 maxSingleBetAmount = 0;
         for (uint32 i = 0; i < 6; i ++) {
             if (numbers[i]) {
                 numberCount = numberCount + 1;    
+                if(round.betAmounts[i] > maxSingleBetAmount){
+                    maxSingleBetAmount = round.betAmounts[i];
+                }
             }
         }
         require(numberCount > 0, "numberCount > 0");
         require(amount >= minBetAmount.mul(uint256(numberCount)), "BetAmount >= minBetAmount * numberCount");
         require(amount <= round.maxBetAmount.mul(uint256(numberCount)), "BetAmount <= round.maxBetAmount * numberCount");
+        if(numberCount == 1){
+            require(maxSingleBetAmount.add(amount).sub(round.totalAmount.sub(maxSingleBetAmount)) < bankerAmount.mul(maxExposureRatio).div(TOTAL_RATE), 'MaxExposure Limit');
+        }
+        
 		if (feeAmount > 0){
             _safeTransferBNB(adminAddress, feeAmount);
         }
@@ -455,6 +525,7 @@ contract Dice is DiceLimit, ReentrancyGuard, Pausable {
     // Deposit token to Dice as a banker, get Syrup back.
     function deposit(uint256 _tokenAmount) public whenPaused nonReentrant notContract {
         require(_tokenAmount > 0, "Deposit amount > 0");
+        require(bankerAmount.add(_tokenAmount) < maxBankerAmount, 'maxBankerAmount Limit');
         BankerInfo storage banker = bankerInfo[msg.sender];
         token.safeTransferFrom(address(msg.sender), address(this), _tokenAmount);
         uint256 diceTokenAmount = _tokenAmount.mul(1e12).div(netValue);
