@@ -23,6 +23,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public playerEndBlock;
     uint256 public bankerEndBlock;
     uint256 public totalBonusAmount;
+    uint256 public totalLotteryAmount;
+    uint256 public totalLcLotteryAmount;
     uint256 public masterChefBonusId;
     uint256 public intervalBlocks;
     uint256 public playerTimeBlocks;
@@ -31,6 +33,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public gapRate = 500;
     uint256 public lcBackRate = 1000; // 10% in gap
     uint256 public bonusRate = 1000; // 10% in gap
+    uint256 public lotteryRate = 100; // 1% in gap
+    uint256 public lcLotteryRate = 50; // 0.5% in gap
     uint256 public minBetAmount;
     uint256 public maxBetRatio = 5;
     uint256 public maxExposureRatio = 300;
@@ -38,6 +42,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public maxBankerAmount;
 
     address public adminAddress;
+    address public lcAdminAddress;
     address public masterChefAddress;
     IBEP20 public token;
     IBEP20 public lcToken;
@@ -87,7 +92,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256[]) public userRounds;
     mapping(address => BankerInfo) public bankerInfo;
 
-    event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate);
+    event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate, uint256 lotteryRate, uint256 lcLotteryRate);
     event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
     event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxExposureRatio);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
@@ -97,12 +102,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event Claim(address indexed sender, uint256 indexed currentEpoch, uint256 amount);
     event ClaimBonusLC(address indexed sender, uint256 amount);
     event ClaimBonus(uint256 amount);
-    event RewardsCalculated(
-        uint256 indexed epoch,
-        uint256 lcbackamount,
-        uint256 bonusamount,
-        uint256 swaplcamount
-    );
+    event RewardsCalculated(uint256 indexed epoch,uint256 lcbackamount,uint256 bonusamount,uint256 swaplcamount);
     event SwapRouterUpdated(address indexed router);
     event EndPlayerTime(uint256 epoch, uint256 blockNumber);
     event EndBankerTime(uint256 epoch, uint256 blockNumber);
@@ -157,14 +157,15 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     // set rates
-    function setRates(uint256 _gapRate, uint256 _lcBackRate, uint256 _bonusRate) external onlyAdmin {
+    function setRates(uint256 _gapRate, uint256 _lcBackRate, uint256 _bonusRate, uint256 _lotteryRate, uint256 _lcLotteryRate) external onlyAdmin {
         require(_gapRate <= 1000, "gapRate <= 10%");
-        require(_lcBackRate.add(_bonusRate) <= TOTAL_RATE, "_lcBackRate + _bonusRate <= TOTAL_RATE");
+        require(_lcBackRate.add(_bonusRate).add(_lotteryRate).add(_lcLotteryRate) <= TOTAL_RATE, "rateSum <= TOTAL_RATE");
         gapRate = _gapRate;
         lcBackRate = _lcBackRate;
         bonusRate = _bonusRate;
-
-        emit RatesUpdated(block.number, gapRate, lcBackRate, bonusRate);
+        lotteryRate = _lotteryRate;
+        lcLotteryRate = _lcLotteryRate;
+        emit RatesUpdated(block.number, gapRate, lcBackRate, bonusRate, lotteryRate, lcLotteryRate);
     }
 
     // set amounts
@@ -183,9 +184,10 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     // set admin address
-    function setAdmin(address _adminAddress) external onlyOwner {
-        require(_adminAddress != address(0), "Cannot be zero address");
+    function setAdmin(address _adminAddress, address _lcAdminAddress) external onlyOwner {
+        require(_adminAddress != address(0) && _lcAdminAddress != address(0), "Cannot be zero address");
         adminAddress = _adminAddress;
+        lcAdminAddress = _lcAdminAddress;
     }
 
     // End banker time
@@ -222,7 +224,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         sendSecret(epoch, bankSecret);
         _pause();
         _updateNetValue(epoch);
-		_claimBonus();
+        _claimBonusAndLottery();
         emit EndPlayerTime(currentEpoch, block.timestamp);
     }
 
@@ -231,7 +233,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(epoch == currentEpoch, "epoch == currentEpoch");
         _pause();
         _updateNetValue(epoch);
-		_claimBonus();
+        _claimBonusAndLottery();
         emit EndPlayerTime(currentEpoch, block.timestamp);
     }
 
@@ -243,7 +245,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // send bankSecret
     function sendSecret(uint256 epoch, uint256 bankSecret) public onlyAdmin whenNotPaused{
-		Round storage round = rounds[epoch];
+        Round storage round = rounds[epoch];
         require(round.lockBlock != 0, "End round after round has locked");
         require(round.status == Status.Lock, "End round after round has locked");
         require(block.number >= round.lockBlock, "Send secret after lockBlock");
@@ -269,7 +271,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // bet number
     function betNumber(bool[6] calldata numbers, uint256 amount) external payable whenNotPaused notContract nonReentrant {
         Round storage round = rounds[currentEpoch];
-		require(msg.value >= feeAmount, "msg.value > feeAmount");
+        require(msg.value >= feeAmount, "msg.value > feeAmount");
         require(round.status == Status.Open, "Round not Open");
         require(block.number > round.startBlock && block.number < round.lockBlock, "Round not bettable");
         require(ledger[currentEpoch][msg.sender].amount == 0, "Bet once per round");
@@ -290,7 +292,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             require(maxSingleBetAmount.add(amount).sub(round.totalAmount.sub(maxSingleBetAmount)) < bankerAmount.mul(maxExposureRatio).div(TOTAL_RATE), 'MaxExposure Limit');
         }
         
-		if (feeAmount > 0){
+        if (feeAmount > 0){
             _safeTransferBNB(adminAddress, feeAmount);
         }
 
@@ -328,9 +330,9 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         // Round valid, claim rewards
         if (rounds[epoch].status == Status.Claimable) {
             require(claimable(epoch, msg.sender), "Not eligible for claim");
-			uint256 singleAmount = betInfo.amount.div(uint256(betInfo.numberCount));
+            uint256 singleAmount = betInfo.amount.div(uint256(betInfo.numberCount));
             reward = singleAmount.mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
-			reward = reward.add(singleAmount);
+            reward = reward.add(singleAmount);
         }
         // Round invalid, refund bet amount
         else {
@@ -346,48 +348,32 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Claim lc back
     function claimLcBack(address user) external notContract nonReentrant {
-        uint256 lcAmount = 0;    
-        uint256 epoch;
-        uint256 roundLcAmount = 0;
-        for (uint256 i = userRounds[user].length - 1; i >= 0; i --){
-            epoch = userRounds[user][i];
-            BetInfo storage betInfo = ledger[epoch][msg.sender];
-            if (betInfo.lcClaimed){
-                break;
-            }else{
-				Round storage round = rounds[epoch];
-                if (round.status == Status.Claimable){
-                    if (betInfo.numbers[round.finalNumber]){
-                        roundLcAmount = betInfo.amount.div(uint256(betInfo.numberCount)).mul(5).mul(gapRate).div(TOTAL_RATE).mul(lcBackRate).div(TOTAL_RATE);
-                        if (betInfo.numberCount > 1){
-                            roundLcAmount = roundLcAmount.add(betInfo.amount.div(uint256(betInfo.numberCount)).mul(uint256(betInfo.numberCount - 1)).mul(gapRate).div(TOTAL_RATE).mul(lcBackRate).div(TOTAL_RATE));
-                        }
-                    }else{
-                        roundLcAmount = betInfo.amount.mul(gapRate).div(TOTAL_RATE).mul(lcBackRate).div(TOTAL_RATE);
-                    }
+        (uint256 lcAmount, uint256 startIndex, uint256 endIndex) = pendingLcBack(user);
 
-					roundLcAmount = roundLcAmount.mul(round.swapLcAmount).div(round.lcBackAmount);
-                    lcAmount = lcAmount.add(roundLcAmount);
-                    betInfo.lcClaimed = true;
-                }
+        if (lcAmount > 0){
+            uint256 epoch;
+            for(uint256 i = startIndex; i < endIndex; i ++){
+                epoch = userRounds[user][i];
+                ledger[epoch][user].lcClaimed = true;
             }
-        }
 
-		if (lcAmount > 0){
-			lcToken.safeTransfer(user, lcAmount);
-		}
+            lcToken.safeTransfer(user, lcAmount);
+        }
         emit ClaimBonusLC(user, lcAmount);
     }
 
     // View pending lc back
-    function pendingLcBack(address user) external view returns (uint256) {
-		uint256 lcAmount = 0;
+    function pendingLcBack(address user) public view returns (uint256 lcAmount, uint256 startIndex, uint256 endIndex) {
         uint256 epoch;
         uint256 roundLcAmount = 0;
+        lcAmount = 0;
+        startIndex = 0;
+        endIndex = userRounds[user].length;
         for (uint256 i = userRounds[user].length - 1; i >= 0; i --){
             epoch = userRounds[user][i];
             BetInfo storage betInfo = ledger[epoch][msg.sender];
             if (betInfo.lcClaimed){
+                startIndex = i.add(1);
                 break;
             }else{
                 Round storage round = rounds[epoch];
@@ -406,19 +392,28 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
                 }
             }
         }
-
-        return lcAmount;    
     }
 
     // Claim all bonus to masterChef
-    function _claimBonus() internal {
-		if( totalBonusAmount > 0){
-			uint256 tmpBonusAmount = totalBonusAmount;
-	        totalBonusAmount = 0;
-			token.safeTransfer(masterChefAddress, tmpBonusAmount);
-			IMasterChef(masterChefAddress).updateBonus(masterChefBonusId);
-	        emit ClaimBonus(tmpBonusAmount);
-		}
+    function _claimBonusAndLottery() internal {
+        uint256 tmpAmount = 0;
+        if(totalBonusAmount > 0){
+            tmpAmount = totalBonusAmount;
+            totalBonusAmount = 0;
+            token.safeTransfer(masterChefAddress, tmpAmount);
+            IMasterChef(masterChefAddress).updateBonus(masterChefBonusId);
+            emit ClaimBonus(tmpAmount);
+        } 
+        if(totalLotteryAmount > 0){
+            tmpAmount = totalLotteryAmount;
+            totalLotteryAmount = 0;
+            token.safeTransfer(adminAddress, tmpAmount);
+        }
+        if(totalLcLotteryAmount > 0){
+            tmpAmount = totalLotteryAmount;
+            totalLotteryAmount = 0;
+            token.safeTransfer(lcAdminAddress, tmpAmount);
+        }
     }
 
     // Return round epochs that a user has participated
@@ -463,7 +458,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         round.lockBlock = block.number.add(intervalBlocks);
         round.bankHash = bankHash;
         round.totalAmount = 0;
-		round.maxBetAmount = bankerAmount.mul(maxBetRatio).div(TOTAL_RATE);
+        round.maxBetAmount = bankerAmount.mul(maxBetRatio).div(TOTAL_RATE);
         round.status = Status.Open;
 
         emit StartRound(epoch, block.number, bankHash);
@@ -485,42 +480,73 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(rounds[epoch].bonusAmount == 0, "Rewards calculated");
         Round storage round = rounds[epoch];
 
-        uint256 lcBackAmount = 0;
-        uint256 bonusAmount = 0;
-        for (uint32 i = 0; i < 6; i ++){
-            if (i == round.finalNumber){
-                uint256 tmpLcBackAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE).mul(lcBackRate).div(TOTAL_RATE);
-                lcBackAmount = lcBackAmount.add(tmpLcBackAmount);
-                uint256 tmpBonusAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE).mul(bonusRate).div(TOTAL_RATE);
-                bonusAmount = bonusAmount.add(tmpBonusAmount);
-                uint256 playerWinAmount = round.betAmounts[i].mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
-                bankerAmount = bankerAmount.sub(playerWinAmount).sub(tmpLcBackAmount).sub(tmpBonusAmount);
-            }else{
-                uint256 tmpLcBackAmount = round.betAmounts[i].mul(gapRate).div(TOTAL_RATE).mul(lcBackRate).div(TOTAL_RATE);
-                lcBackAmount = lcBackAmount.add(tmpLcBackAmount);
-                uint256 tmpBonusAmount = round.betAmounts[i].mul(gapRate).div(TOTAL_RATE).mul(bonusRate).div(TOTAL_RATE);
-                bonusAmount = bonusAmount.add(tmpBonusAmount);
-                uint256 playerLostAmount = round.betAmounts[i];
-                bankerAmount = bankerAmount.add(playerLostAmount).sub(tmpLcBackAmount).sub(tmpBonusAmount);
-            }    
+        { // avoid stack too deep
+            uint256 lcBackAmount = 0;
+            uint256 bonusAmount = 0;
+            uint256 tmpAmount = 0;
+            uint256 gapAmount = 0;
+            uint256 tmpBankerAmount = bankerAmount;
+            for (uint32 i = 0; i < 6; i ++){
+                if (i == round.finalNumber){
+                    tmpBankerAmount = tmpBankerAmount.sub(round.betAmounts[i].mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE));
+                    gapAmount = gapAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE);
+                }else{
+                    tmpBankerAmount = tmpBankerAmount.add(round.betAmounts[i]);
+                    gapAmount = round.betAmounts[i].mul(gapRate).div(TOTAL_RATE);
+                }
+                tmpAmount = gapAmount.mul(lcBackRate).div(TOTAL_RATE);
+                lcBackAmount = lcBackAmount.add(tmpAmount);
+                tmpBankerAmount = tmpBankerAmount.sub(tmpAmount);
+
+                tmpAmount = gapAmount.mul(bonusRate).div(TOTAL_RATE);
+                bonusAmount = bonusAmount.add(tmpAmount);
+                tmpBankerAmount = tmpBankerAmount.sub(tmpAmount); 
+            }
+            round.lcBackAmount = lcBackAmount;
+            round.bonusAmount = bonusAmount;
+            bankerAmount = tmpBankerAmount;
+    
+            if(address(token) == address(lcToken)){
+                round.swapLcAmount = lcBackAmount;
+            }else if(address(swapRouter) != address(0)){
+                address[] memory path = new address[](2);
+                path[0] = address(token);
+                path[1] = address(lcToken);
+                uint256 lcAmout = swapRouter.swapExactTokensForTokens(round.lcBackAmount, 0, path, address(this), block.timestamp + (5 minutes))[1];
+                round.swapLcAmount = lcAmout;
+            }
+            totalBonusAmount = totalBonusAmount.add(bonusAmount);
         }
 
-        round.lcBackAmount = lcBackAmount;
-        round.bonusAmount = bonusAmount;
+        { // avoid stack too deep
+            uint256 lotteryAmount = 0;
+            uint256 lcLotteryAmount = 0;
+            uint256 tmpAmount = 0;
+            uint256 gapAmount = 0;
+            uint256 tmpBankerAmount = bankerAmount;
+            for (uint32 i = 0; i < 6; i ++){
+                if (i == round.finalNumber){
+                    gapAmount = gapAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE);
+                }else{
+                    gapAmount = round.betAmounts[i].mul(gapRate).div(TOTAL_RATE);
+                }
+                tmpAmount = gapAmount.mul(lotteryRate).div(TOTAL_RATE);
+                lotteryAmount = lotteryAmount.add(tmpAmount);
+                tmpBankerAmount = tmpBankerAmount.sub(tmpAmount);
 
-		if(address(token) == address(lcToken)){
-			round.swapLcAmount = lcBackAmount;
-		}else if(address(swapRouter) != address(0)){
-            address[] memory path = new address[](2);
-            path[0] = address(token);
-            path[1] = address(lcToken);
-            uint256 lcAmout = swapRouter.swapExactTokensForTokens(round.lcBackAmount, 0, path, address(this), block.timestamp + (5 minutes))[1];
-            round.swapLcAmount = lcAmout;
+                tmpAmount = gapAmount.mul(lcLotteryRate).div(TOTAL_RATE);
+                lcLotteryAmount = lcLotteryAmount.add(tmpAmount);
+                tmpBankerAmount = tmpBankerAmount.sub(tmpAmount); 
+            }
+            bankerAmount = tmpBankerAmount;
+    
+            totalLotteryAmount = totalLotteryAmount.add(lotteryAmount);
+            totalLcLotteryAmount = totalLcLotteryAmount.add(lcLotteryAmount);
         }
-        totalBonusAmount = totalBonusAmount.add(bonusAmount);
 
         emit RewardsCalculated(epoch, round.lcBackAmount, round.bonusAmount, round.swapLcAmount);
     }
+
 
     // Deposit token to Dice as a banker, get Syrup back.
     function deposit(uint256 _tokenAmount) public whenPaused nonReentrant notContract {
@@ -577,7 +603,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         emit SwapRouterUpdated(address(swapRouter));
     }
 
-	function _safeTransferBNB(address to, uint256 value) internal {
+    function _safeTransferBNB(address to, uint256 value) internal {
         (bool success, ) = to.call{gas: 23000, value: value}("");
         require(success, 'TransferHelper: BNB_TRANSFER_FAILED');
     }
