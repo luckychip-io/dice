@@ -8,7 +8,7 @@ const Dice = artifacts.require('Dice');
 const MockBEP20 = artifacts.require('libs/MockBEP20');
 const MasterChef = artifacts.require('MasterChef');
 
-contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
+contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]) => {
     beforeEach(async () => {
 		this.token = await MockBEP20.new('Wrapped BNB', 'WBNB', '10000000', { from: minter });
 		await this.token.transfer(alice, '1000000', {from: minter});
@@ -34,7 +34,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, minter]) => {
     
     });
     it('real case', async () => {
-		await this.dice.setAdmin(admin, {from: minter});
+		await this.dice.setAdmin(admin, lcAdmin, {from: minter});
 
 		await this.token.approve(this.dice.address, '1000000', { from: alice });
 		await this.token.approve(this.dice.address, '1000000', { from: bob });
