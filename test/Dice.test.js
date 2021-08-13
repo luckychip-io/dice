@@ -10,18 +10,18 @@ const MasterChef = artifacts.require('MasterChef');
 
 contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]) => {
     beforeEach(async () => {
-		this.token = await MockBEP20.new('Wrapped BNB', 'WBNB', '10000000', { from: minter });
-		await this.token.transfer(alice, '1000000', {from: minter});
-		await this.token.transfer(bob, '1000000', {from: minter});
-		await this.token.transfer(carol, '1000000', {from: minter});
-		await this.token.transfer(david, '1000000', {from: minter});
+		this.token = await MockBEP20.new('Wrapped BNB', 'WBNB', '300000000', { from: minter });
+		await this.token.transfer(alice, '30000000', {from: minter});
+		await this.token.transfer(bob, '30000000', {from: minter});
+		await this.token.transfer(carol, '30000000', {from: minter});
+		await this.token.transfer(david, '30000000', {from: minter});
 
         this.lc = await LCToken.new({ from: minter});
 		this.chef = await MasterChef.new(this.lc.address, admin, refFeeAddr, '1000', '100', '900000','90000', '10000', { from: minter });	
         await this.lc.transferOwnership(this.chef.address, { from: minter });
 
-        this.diceToken = await DiceToken.new('LC Dice BPs', 'LC-DICE-WBNB', { from: minter }); 
-        this.dice = await Dice.new(this.token.address, this.lc.address, this.diceToken.address, this.chef.address, 0, 20, 500, 600, 1, 1, 1000000, { from: minter });
+        this.diceToken = await DiceToken.new('LuckyWBNB', 'LuckyWBNB', { from: minter }); 
+        this.dice = await Dice.new(this.token.address, this.lc.address, this.diceToken.address, this.chef.address, 0, 20, 500, 600, 1, 1, 30000000, { from: minter });
         await this.diceToken.transferOwnership(this.dice.address, { from: minter});
 
 		this.lp1 = await MockBEP20.new('LPToken', 'LP1', '10000000', { from: minter });
@@ -36,20 +36,20 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
     it('real case', async () => {
 		await this.dice.setAdmin(admin, lcAdmin, {from: minter});
 
-		await this.token.approve(this.dice.address, '1000000', { from: alice });
-		await this.token.approve(this.dice.address, '1000000', { from: bob });
-		await this.token.approve(this.dice.address, '1000000', { from: carol });
-		await this.token.approve(this.dice.address, '1000000', { from: david });
+		await this.token.approve(this.dice.address, '30000000', { from: alice });
+		await this.token.approve(this.dice.address, '30000000', { from: bob });
+		await this.token.approve(this.dice.address, '30000000', { from: carol });
+		await this.token.approve(this.dice.address, '30000000', { from: david });
 		await this.chef.deposit(0, '100', AddressZero, {from:carol});
 		await this.chef.deposit(0, '200', AddressZero, {from:david});
-		await this.diceToken.approve(this.dice.address, '1000000', { from: carol });
-		await this.diceToken.approve(this.dice.address, '1000000', { from: david });
-		await this.dice.deposit(200000, {from: carol});
-		await this.dice.deposit(400000, {from: david});
-		await expectRevert(this.dice.deposit(500000, {from: david}), 'maxBankerAmount Limit');
+		await this.diceToken.approve(this.dice.address, '10000000', { from: carol });
+		await this.diceToken.approve(this.dice.address, '10000000', { from: david });
+		await this.dice.deposit(6000000, {from: carol});
+		await this.dice.deposit(12000000, {from: david});
+		await expectRevert(this.dice.deposit(15000000, {from: david}), 'maxBankerAmount Limit');
 
-		assert.equal((await this.dice.bankerAmount()).toString(), '600000');
-		assert.equal((await this.dice.canWithdrawToken(carol)).toString(), '200000');
+		assert.equal((await this.dice.bankerAmount()).toString(), '18000000');
+		assert.equal((await this.dice.canWithdrawToken(carol)).toString(), '6000000');
 
 		let randomNumber = ethers.utils.hexlify(ethers.utils.randomBytes(32));
 		let bankHash = ethers.utils.keccak256(randomNumber);
@@ -59,8 +59,8 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
 
 		console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());		
 		console.log('bob balance: ', (await this.token.balanceOf(bob)).toString());		
-		await this.dice.betNumber([false,false,true,false,false,false], 200, {from:alice, value:1});
-		await this.dice.betNumber([true,true,true,true,true,true], 1200, {from:bob, value:1});
+		await this.dice.betNumber([false,false,true,false,false,false], 4000, {from:alice, value:1});
+		await this.dice.betNumber([true,true,true,true,true,true], 24000, {from:bob, value:1});
 		console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());		
 		console.log('bob balance: ', (await this.token.balanceOf(bob)).toString());		
 
@@ -102,12 +102,14 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
 		console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());		
 		console.log('bob balance: ', (await this.token.balanceOf(bob)).toString());		
 		console.log('bankerAmount',(await this.dice.bankerAmount()).toString());
+        console.log('admin balance',(await this.token.balanceOf(admin)).toString());
+        console.log('lcAdmin balance',(await this.token.balanceOf(lcAdmin)).toString());
 
 		await expectRevert(this.dice.deposit(200000, {from: alice}), 'Pausable: not paused');
 		await expectRevert(this.dice.withdraw(200000, {from: alice}), 'Pausable: not paused');
 
-		await this.dice.betNumber([false,false,true,false,false,true], 200, {from:alice, value:1});
-        await this.dice.betNumber([true,true,true,false,false,false], 600, {from:bob, value:1});
+		await this.dice.betNumber([false,false,true,false,false,true], 8000, {from:alice, value:1});
+        await this.dice.betNumber([true,true,true,false,false,false], 12000, {from:bob, value:1});
         console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());
         console.log('bob balance: ', (await this.token.balanceOf(bob)).toString());
 		
@@ -146,6 +148,8 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
         console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());
         console.log('bob balance: ', (await this.token.balanceOf(bob)).toString());
         console.log('bankerAmount',(await this.dice.bankerAmount()).toString());
+        console.log('admin balance',(await this.token.balanceOf(admin)).toString());
+        console.log('lcAdmin balance',(await this.token.balanceOf(lcAdmin)).toString());
 
 		round = await this.dice.rounds(2);
 		for(var i = 0; i < 13; i ++){

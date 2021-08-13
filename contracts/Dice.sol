@@ -410,8 +410,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             token.safeTransfer(adminAddress, tmpAmount);
         }
         if(totalLcLotteryAmount > 0){
-            tmpAmount = totalLotteryAmount;
-            totalLotteryAmount = 0;
+            tmpAmount = totalLcLotteryAmount;
+            totalLcLotteryAmount = 0;
             token.safeTransfer(lcAdminAddress, tmpAmount);
         }
     }
