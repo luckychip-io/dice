@@ -3,17 +3,16 @@ const DiceToken = artifacts.require("DiceToken")
 const Dice = artifacts.require("Dice")
 
 module.exports = async function(deployer) {
-  await deployer.deploy(DiceToken, "LC Dice BPs", "LC-DICE-WBNB");
+  await deployer.deploy(DiceToken, "LuckyWBNB", "LuckyWBNB");
   let instanceToken = await DiceToken.deployed();
   console.log(instanceToken.address);
 
   await deployer.deploy(
 	Dice,
 	"0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd",
-	"0x30998b6283D428a1e85068F416a1992365d9e0Db",
+	"0x8909BbBe374cF5158BEB18b1A8D5e93BC3e2C30F",
 	instanceToken.address,
-	//"0x56c1Bcdad3996000DE41d503B38F3b7b2f71d842",
-	"0x98ebA625BE3C2a5ea65c9B691f3362d0d3e88179",
+	"0xCc82850F42281E71f75ECc675ABdCc92891ec704",
 	0,
 	20,
 	500,
