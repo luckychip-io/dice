@@ -21,4 +21,5 @@ module.exports = async function(deployer) {
     ethers.utils.parseEther('0.001'),
     ethers.utils.parseEther('300000')
 	);
+
 };

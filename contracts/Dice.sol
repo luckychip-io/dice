@@ -103,7 +103,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event ClaimBonusLC(address indexed sender, uint256 amount);
     event ClaimBonus(uint256 amount);
     event RewardsCalculated(uint256 indexed epoch,uint256 lcbackamount,uint256 bonusamount,uint256 swaplcamount);
-    event SwapRouterUpdated(address indexed router);
     event EndPlayerTime(uint256 epoch, uint256 blockNumber);
     event EndBankerTime(uint256 epoch, uint256 blockNumber);
     event UpdateNetValue(uint256 epoch, uint256 blockNumber, uint256 netValue);
@@ -139,8 +138,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     modifier notContract() {
-        require(!_isContract(msg.sender), "contract not allowed");
-        require(msg.sender == tx.origin, "proxy contract not allowed");
+        require(!_isContract(msg.sender), "no contract");
+        require(msg.sender == tx.origin, "no proxy");
         _;
     }
 
@@ -158,8 +157,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // set rates
     function setRates(uint256 _gapRate, uint256 _lcBackRate, uint256 _bonusRate, uint256 _lotteryRate, uint256 _lcLotteryRate) external onlyAdmin {
-        require(_gapRate <= 1000, "gapRate <= 10%");
-        require(_lcBackRate.add(_bonusRate).add(_lotteryRate).add(_lcLotteryRate) <= TOTAL_RATE, "rateSum <= TOTAL_RATE");
+        require(_gapRate <= 1000, "gapRate lt 10%");
+        require(_lcBackRate.add(_bonusRate).add(_lotteryRate).add(_lcLotteryRate) <= TOTAL_RATE, "rateSum");
         gapRate = _gapRate;
         lcBackRate = _lcBackRate;
         bonusRate = _bonusRate;
@@ -185,18 +184,18 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // set admin address
     function setAdmin(address _adminAddress, address _lcAdminAddress) external onlyOwner {
-        require(_adminAddress != address(0) && _lcAdminAddress != address(0), "Cannot be zero address");
+        require(_adminAddress != address(0) && _lcAdminAddress != address(0), "Zero");
         adminAddress = _adminAddress;
         lcAdminAddress = _lcAdminAddress;
     }
 
     // End banker time
     function endBankerTime(uint256 epoch, bytes32 bankHash) external onlyAdmin whenPaused {
-        require(epoch == currentEpoch + 1, "epoch == currentEpoch + 1");
-        require(bankerAmount > 0, "Round can start only when bankerAmount > 0");
+        require(epoch == currentEpoch + 1, "Epoch");
+        require(bankerAmount > 0, "bankerAmount gt 0");
         prevBankerAmount = bankerAmount;
         _unpause();
-        emit EndBankerTime(currentEpoch, block.timestamp);
+        emit EndBankerTime(currentEpoch, block.number);
         
         currentEpoch = currentEpoch + 1;
         _startRound(currentEpoch, bankHash);
@@ -206,7 +205,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Start the next round n, lock for round n-1
     function executeRound(uint256 epoch, bytes32 bankHash) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "epoch == currentEpoch");
+        require(epoch == currentEpoch, "Epoch");
 
         // CurrentEpoch refers to previous round (n-1)
         lockRound(currentEpoch);
@@ -214,44 +213,43 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         // Increment currentEpoch to current round (n)
         currentEpoch = currentEpoch + 1;
         _startRound(currentEpoch, bankHash);
-        require(rounds[currentEpoch].startBlock < playerEndBlock, "startBlock < playerEndBlock");
-        require(rounds[currentEpoch].lockBlock <= playerEndBlock, "lockBlock < playerEndBlock");
+        require(rounds[currentEpoch].startBlock < playerEndBlock, "startBlock");
+        require(rounds[currentEpoch].lockBlock <= playerEndBlock, "lockBlock");
     }
 
     // end player time, triggers banker time
     function endPlayerTime(uint256 epoch, uint256 bankSecret) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "epoch == currentEpoch");
+        require(epoch == currentEpoch, "epoch");
         sendSecret(epoch, bankSecret);
         _pause();
         _updateNetValue(epoch);
         _claimBonusAndLottery();
-        emit EndPlayerTime(currentEpoch, block.timestamp);
+        emit EndPlayerTime(currentEpoch, block.number);
     }
 
     // end player time without caring last round
     function endPlayerTimeImmediately(uint256 epoch) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "epoch == currentEpoch");
+        require(epoch == currentEpoch, "epoch");
         _pause();
         _updateNetValue(epoch);
         _claimBonusAndLottery();
-        emit EndPlayerTime(currentEpoch, block.timestamp);
+        emit EndPlayerTime(currentEpoch, block.number);
     }
 
     // update net value
     function _updateNetValue(uint256 epoch) internal whenPaused{    
         netValue = netValue.mul(bankerAmount).div(prevBankerAmount);
-        emit UpdateNetValue(epoch, block.timestamp, netValue);
+        emit UpdateNetValue(epoch, block.number, netValue);
     }
 
     // send bankSecret
     function sendSecret(uint256 epoch, uint256 bankSecret) public onlyAdmin whenNotPaused{
         Round storage round = rounds[epoch];
-        require(round.lockBlock != 0, "End round after round has locked");
-        require(round.status == Status.Lock, "End round after round has locked");
-        require(block.number >= round.lockBlock, "Send secret after lockBlock");
-        require(block.number <= round.lockBlock.add(intervalBlocks), "Send secret within intervalBlocks");
-        require(round.bankSecret == 0, "Already revealed");
-        require(keccak256(abi.encodePacked(bankSecret)) == round.bankHash, "Bank reveal not matching commitment");
+        require(round.lockBlock != 0 || round.status == Status.Lock, "Has locked");
+        require(block.number >= round.lockBlock, "After lockBlock");
+        require(block.number <= round.lockBlock.add(intervalBlocks), "Within intervalBlocks");
+        require(round.bankSecret == 0, "Revealed");
+        require(keccak256(abi.encodePacked(bankSecret)) == round.bankHash, "Not matching");
 
         _safeSendSecret(epoch, bankSecret);
         _calculateRewards(epoch);
@@ -271,10 +269,10 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // bet number
     function betNumber(bool[6] calldata numbers, uint256 amount) external payable whenNotPaused notContract nonReentrant {
         Round storage round = rounds[currentEpoch];
-        require(msg.value >= feeAmount, "msg.value > feeAmount");
-        require(round.status == Status.Open, "Round not Open");
-        require(block.number > round.startBlock && block.number < round.lockBlock, "Round not bettable");
-        require(ledger[currentEpoch][msg.sender].amount == 0, "Bet once per round");
+        require(msg.value >= feeAmount, "FeeAmount");
+        require(round.status == Status.Open, "Not Open");
+        require(block.number > round.startBlock && block.number < round.lockBlock, "Not bettable");
+        require(ledger[currentEpoch][msg.sender].amount == 0, "Bet once");
         uint16 numberCount = 0;
         uint256 maxSingleBetAmount = 0;
         for (uint32 i = 0; i < 6; i ++) {
@@ -286,8 +284,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             }
         }
         require(numberCount > 0, "numberCount > 0");
-        require(amount >= minBetAmount.mul(uint256(numberCount)), "BetAmount >= minBetAmount * numberCount");
-        require(amount <= round.maxBetAmount.mul(uint256(numberCount)), "BetAmount <= round.maxBetAmount * numberCount");
+        require(amount >= minBetAmount.mul(uint256(numberCount)), "minBetAmount limit");
+        require(amount <= round.maxBetAmount.mul(uint256(numberCount)), "maxBetAmount limit");
         if(numberCount == 1){
             require(maxSingleBetAmount.add(amount).sub(round.totalAmount.sub(maxSingleBetAmount)) < bankerAmount.mul(maxExposureRatio).div(TOTAL_RATE), 'MaxExposure Limit');
         }
@@ -321,22 +319,22 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Claim reward
     function claim(uint256 epoch) external notContract nonReentrant {
-        require(rounds[epoch].startBlock != 0, "Round has not started");
-        require(block.number > rounds[epoch].lockBlock, "Round has not locked");
+        require(rounds[epoch].startBlock != 0, "Not started");
+        require(block.number > rounds[epoch].lockBlock, "Not locked");
         require(!ledger[epoch][msg.sender].claimed, "Rewards claimed");
 
         uint256 reward;
         BetInfo storage betInfo = ledger[epoch][msg.sender];
         // Round valid, claim rewards
         if (rounds[epoch].status == Status.Claimable) {
-            require(claimable(epoch, msg.sender), "Not eligible for claim");
+            require(claimable(epoch, msg.sender), "Not claimable");
             uint256 singleAmount = betInfo.amount.div(uint256(betInfo.numberCount));
             reward = singleAmount.mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
             reward = reward.add(singleAmount);
         }
         // Round invalid, refund bet amount
         else {
-            require(refundable(epoch, msg.sender), "Not eligible for refund");
+            require(refundable(epoch, msg.sender), "Not refundable");
             reward = ledger[epoch][msg.sender].amount;
         }
 
@@ -435,6 +433,10 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         return (values, cursor.add(length));
     }
 
+    function getUserNumbers(uint256 epoch, address user) external view returns (bool[6] memory){
+        return ledger[epoch][user].numbers;
+    }
+
     // Get the claimable stats of specific epoch and user account
     function claimable(uint256 epoch, address user) public view returns (bool) {
         return (rounds[epoch].status == Status.Claimable) && (ledger[epoch][user].numbers[rounds[epoch].finalNumber]);
@@ -447,7 +449,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Manual Start round. Previous round n-1 must lock
     function manualStartRound(bytes32 bankHash) external onlyAdmin whenNotPaused {
-        require(block.number >= rounds[currentEpoch].lockBlock, "Manual start new round after current round lock");
+        require(block.number >= rounds[currentEpoch].lockBlock, "Manual start");
         currentEpoch = currentEpoch + 1;
         _startRound(currentEpoch, bankHash);
     }
@@ -467,16 +469,16 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // Lock round
     function lockRound(uint256 epoch) public whenNotPaused {
         Round storage round = rounds[epoch];
-        require(round.startBlock != 0, "Lock round after round has started");
-        require(block.number >= round.lockBlock, "Lock round after lockBlock");
-        require(block.number <= round.lockBlock.add(intervalBlocks), "Lock round within intervalBlocks");
+        require(round.startBlock != 0, "Has started");
+        require(block.number >= round.lockBlock, "After lockBlock");
+        require(block.number <= round.lockBlock.add(intervalBlocks), "Within intervalBlocks");
         round.status = Status.Lock;
         emit LockRound(epoch, block.number);
     }
 
     // Calculate rewards for round
     function _calculateRewards(uint256 epoch) internal {
-        require(lcBackRate.add(bonusRate) <= TOTAL_RATE, "lcBackRate + bonusRate <= TOTAL_RATE");
+        require(lcBackRate.add(bonusRate) <= TOTAL_RATE, "RateSum");
         require(rounds[epoch].bonusAmount == 0, "Rewards calculated");
         Round storage round = rounds[epoch];
 
@@ -550,7 +552,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Deposit token to Dice as a banker, get Syrup back.
     function deposit(uint256 _tokenAmount) public whenPaused nonReentrant notContract {
-        require(_tokenAmount > 0, "Deposit amount > 0");
+        require(_tokenAmount > 0, "Amount > 0");
         require(bankerAmount.add(_tokenAmount) < maxBankerAmount, 'maxBankerAmount Limit');
         BankerInfo storage banker = bankerInfo[msg.sender];
         token.safeTransferFrom(address(msg.sender), address(this), _tokenAmount);
@@ -598,14 +600,13 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Update the swap router.
     function updateSwapRouter(address _router) external onlyAdmin {
-        require(_router != address(0), "DICE: Invalid router address.");
+        require(_router != address(0), "Zero");
         swapRouter = ILuckyChipRouter02(_router);
-        emit SwapRouterUpdated(address(swapRouter));
     }
 
     function _safeTransferBNB(address to, uint256 value) internal {
         (bool success, ) = to.call{gas: 23000, value: value}("");
-        require(success, 'TransferHelper: BNB_TRANSFER_FAILED');
+        require(success, 'BNB_TRANSFER_FAILED');
     }
 }
 

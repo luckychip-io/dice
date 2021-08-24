@@ -71,7 +71,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
 
 		lockBlock = round[1];
 		console.log(`Current block: ${(await time.latestBlock())},${lockBlock}`);
-		await expectRevert(this.dice.claim(1, {from: alice}), 'Round has not locked');
+		await expectRevert(this.dice.claim(1, {from: alice}), 'Not locked');
 		await time.advanceBlockTo(lockBlock);
 		let newRandomNumber = ethers.utils.hexlify(ethers.utils.randomBytes(32));
 		let newBankHash = ethers.utils.keccak256(newRandomNumber);
@@ -95,7 +95,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
 			await this.dice.claim(1, {from: alice});
 			console.log(canClaim, 'claim for alice');
 		}else{
-			await expectRevert(this.dice.claim(1, {from: alice}), 'Not eligible for claim');
+			await expectRevert(this.dice.claim(1, {from: alice}), 'Not claimable');
 		}
 
 		await this.dice.claim(1, {from: bob});
@@ -134,7 +134,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
             await this.dice.claim(2, {from: alice});
             console.log(canClaim, 'claim for alice');
         }else{
-            await expectRevert(this.dice.claim(2, {from: alice}), 'Not eligible for claim');
+            await expectRevert(this.dice.claim(2, {from: alice}), 'Not claimable');
         }
 
 		canClaim = await this.dice.claimable(2, bob, {from: bob});
@@ -142,7 +142,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
             await this.dice.claim(2, {from: bob});
             console.log(canClaim, 'claim for alice');
         }else{
-            await expectRevert(this.dice.claim(2, {from: bob}), 'Not eligible for claim');
+            await expectRevert(this.dice.claim(2, {from: bob}), 'Not claimable');
         }
 
         console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());
