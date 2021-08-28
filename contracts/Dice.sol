@@ -37,7 +37,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public lcLotteryRate = 50; // 0.5% in gap
     uint256 public minBetAmount;
     uint256 public maxBetRatio = 5;
-    uint256 public maxExposureRatio = 300;
+    uint256 public maxLostRatio = 300;
     uint256 public feeAmount;
     uint256 public maxBankerAmount;
 
@@ -92,9 +92,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256[]) public userRounds;
     mapping(address => BankerInfo) public bankerInfo;
 
+    event AdminUpdated(uint256 indexed block, address adminAddress, address lcAdminAddress);
+    event BlocksUpdated(uint256 indexed block, uint256 playerTimeBlocks, uint256 bankerTimeBlocks);
     event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate, uint256 lotteryRate, uint256 lcLotteryRate);
     event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
-    event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxExposureRatio);
+    event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
     event LockRound(uint256 indexed epoch, uint256 blockNumber);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
@@ -153,6 +155,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         intervalBlocks = _intervalBlocks;
         playerTimeBlocks = _playerTimeBlocks;
         bankerTimeBlocks = _bankerTimeBlocks;
+        emit BlocksUpdated(block.number, playerTimeBlocks, bankerTimeBlocks);
     }
 
     // set rates
@@ -176,10 +179,12 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     // set ratios
-    function setRatios(uint256 _maxBetRatio, uint256 _maxExposureRatio) external onlyAdmin {
+    function setRatios(uint256 _maxBetRatio, uint256 _maxLostRatio) external onlyAdmin {
+        require(_maxBetRatio <= 50, "maxBetRatio lt 0.5%");
+        require(_maxLostRatio <= 500, "maxLostRatio lt 5%");
         maxBetRatio = _maxBetRatio;
-        maxExposureRatio = _maxExposureRatio;
-        emit RatiosUpdated(block.number, maxBetRatio, maxExposureRatio);
+        maxLostRatio = _maxLostRatio;
+        emit RatiosUpdated(block.number, maxBetRatio, maxLostRatio);
     }
 
     // set admin address
@@ -187,6 +192,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(_adminAddress != address(0) && _lcAdminAddress != address(0), "Zero");
         adminAddress = _adminAddress;
         lcAdminAddress = _lcAdminAddress;
+        emit AdminUpdated(block.number, adminAddress, lcAdminAddress);
     }
 
     // End banker time
@@ -259,7 +265,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         Round storage round = rounds[epoch];
         round.secretSentBlock = block.number;
         round.bankSecret = bankSecret;
-        uint256 random = round.bankSecret ^ round.betUsers ^ block.difficulty;
+        uint256 random = round.bankSecret ^ round.betUsers ^ block.timestamp ^ block.difficulty;
         round.finalNumber = uint32(random % 6);
         round.status = Status.Claimable;
 
@@ -274,20 +280,29 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(block.number > round.startBlock && block.number < round.lockBlock, "Not bettable");
         require(ledger[currentEpoch][msg.sender].amount == 0, "Bet once");
         uint16 numberCount = 0;
-        uint256 maxSingleBetAmount = 0;
         for (uint32 i = 0; i < 6; i ++) {
             if (numbers[i]) {
                 numberCount = numberCount + 1;    
-                if(round.betAmounts[i] > maxSingleBetAmount){
-                    maxSingleBetAmount = round.betAmounts[i];
-                }
             }
         }
         require(numberCount > 0, "numberCount > 0");
         require(amount >= minBetAmount.mul(uint256(numberCount)), "minBetAmount limit");
-        require(amount <= round.maxBetAmount.mul(uint256(numberCount)), "maxBetAmount limit");
-        if(numberCount == 1){
-            require(maxSingleBetAmount.add(amount).sub(round.totalAmount.sub(maxSingleBetAmount)) < bankerAmount.mul(maxExposureRatio).div(TOTAL_RATE), 'MaxExposure Limit');
+        require(amount <= round.maxBetAmount.mul(uint256(numberCount)), "maxBetAmount limit"); 
+        uint256 maxBetAmount = 0;
+        for (uint32 i = 0; i < 6; i ++) {
+            if (numbers[i]) {
+                if(round.betAmounts[i].add(amount.div(uint256(numberCount))) > maxBetAmount){
+                    maxBetAmount = round.betAmounts[i].add(amount.div(uint256(numberCount)));
+                }
+            }else{
+                if(round.betAmounts[i] > maxBetAmount){
+                    maxBetAmount = round.betAmounts[i];
+                }
+            }
+        }
+
+        if(maxBetAmount.mul(5) > round.totalAmount.add(amount).sub(maxBetAmount)){
+            require(maxBetAmount.mul(5).sub(round.totalAmount.add(amount).sub(maxBetAmount)) < bankerAmount.mul(maxLostRatio).div(TOTAL_RATE), 'MaxLost Limit');
         }
         
         if (feeAmount > 0){
@@ -433,8 +448,9 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         return (values, cursor.add(length));
     }
 
-    function getUserNumbers(uint256 epoch, address user) external view returns (bool[6] memory){
-        return ledger[epoch][user].numbers;
+    function getUserBetInfo(uint256 epoch, address user) external view returns (uint256, uint16, bool[6] memory, bool, bool){
+        BetInfo storage betInfo = ledger[epoch][user];
+        return (betInfo.amount, betInfo.numberCount, betInfo.numbers, betInfo.claimed, betInfo.lcClaimed);
     }
 
     // Get the claimable stats of specific epoch and user account
@@ -452,6 +468,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(block.number >= rounds[currentEpoch].lockBlock, "Manual start");
         currentEpoch = currentEpoch + 1;
         _startRound(currentEpoch, bankHash);
+        require(rounds[currentEpoch].startBlock < playerEndBlock, "startBlock");
+        require(rounds[currentEpoch].lockBlock <= playerEndBlock, "lockBlock");
     }
 
     function _startRound(uint256 epoch, bytes32 bankHash) internal {
@@ -491,7 +509,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             for (uint32 i = 0; i < 6; i ++){
                 if (i == round.finalNumber){
                     tmpBankerAmount = tmpBankerAmount.sub(round.betAmounts[i].mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE));
-                    gapAmount = gapAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE);
+                    gapAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE);
                 }else{
                     tmpBankerAmount = tmpBankerAmount.add(round.betAmounts[i]);
                     gapAmount = round.betAmounts[i].mul(gapRate).div(TOTAL_RATE);
@@ -514,7 +532,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
                 address[] memory path = new address[](2);
                 path[0] = address(token);
                 path[1] = address(lcToken);
-                uint256 lcAmout = swapRouter.swapExactTokensForTokens(round.lcBackAmount, 0, path, address(this), block.timestamp + (5 minutes))[1];
+                uint256 amountOut = swapRouter.getAmountsOut(round.lcBackAmount, path)[1];
+                uint256 lcAmout = swapRouter.swapExactTokensForTokens(round.lcBackAmount, amountOut.mul(8).div(10), path, address(this), block.timestamp + (5 minutes))[1];
                 round.swapLcAmount = lcAmout;
             }
             totalBonusAmount = totalBonusAmount.add(bonusAmount);
