@@ -52,7 +52,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     enum Status {
         Pending,
         Open,
-        Lock,
         Claimable,
         Expired
     }
@@ -98,7 +97,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
     event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
-    event LockRound(uint256 indexed epoch, uint256 blockNumber);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
     event BetNumber(address indexed sender, uint256 indexed currentEpoch, bool[6] numbers, uint256 amount);
     event Claim(address indexed sender, uint256 indexed currentEpoch, uint256 amount);
@@ -211,10 +209,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Start the next round n, lock for round n-1
     function executeRound(uint256 epoch, bytes32 bankHash) external onlyAdmin whenNotPaused{
-        require(epoch == currentEpoch, "Epoch");
-
         // CurrentEpoch refers to previous round (n-1)
-        lockRound(currentEpoch);
+        require(epoch == currentEpoch, "Epoch");
+        require(rounds[currentEpoch].startBlock != 0, "Has started");
+        require(block.number >= rounds[currentEpoch].lockBlock, "After lockBlock");
+        require(block.number <= rounds[currentEpoch].lockBlock.add(intervalBlocks), "Within intervalBlocks");
 
         // Increment currentEpoch to current round (n)
         currentEpoch = currentEpoch + 1;
@@ -251,7 +250,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // send bankSecret
     function sendSecret(uint256 epoch, uint256 bankSecret) public onlyAdmin whenNotPaused{
         Round storage round = rounds[epoch];
-        require(round.lockBlock != 0 || round.status == Status.Lock, "Has locked");
+        require(round.lockBlock != 0, "Has locked");
         require(block.number >= round.lockBlock, "After lockBlock");
         require(block.number <= round.lockBlock.add(intervalBlocks), "Within intervalBlocks");
         require(round.bankSecret == 0, "Revealed");
@@ -482,16 +481,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         round.status = Status.Open;
 
         emit StartRound(epoch, block.number, bankHash);
-    }
-
-    // Lock round
-    function lockRound(uint256 epoch) public whenNotPaused {
-        Round storage round = rounds[epoch];
-        require(round.startBlock != 0, "Has started");
-        require(block.number >= round.lockBlock, "After lockBlock");
-        require(block.number <= round.lockBlock.add(intervalBlocks), "Within intervalBlocks");
-        round.status = Status.Lock;
-        emit LockRound(epoch, block.number);
     }
 
     // Calculate rewards for round

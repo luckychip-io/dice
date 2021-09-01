@@ -120,7 +120,6 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, minter]
 
 		lockBlock = round[1];
 		await time.advanceBlockTo(lockBlock);
-		await this.dice.lockRound(2, {from:admin});
 		await this.dice.endPlayerTime(2, newRandomNumber, {from: admin});
 
 		round = await this.dice.rounds(2);
