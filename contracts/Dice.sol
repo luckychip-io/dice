@@ -101,7 +101,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event BetNumber(address indexed sender, uint256 indexed currentEpoch, bool[6] numbers, uint256 amount);
     event Claim(address indexed sender, uint256 indexed currentEpoch, uint256 amount);
     event ClaimBonusLC(address indexed sender, uint256 amount);
-    event ClaimBonus(uint256 amount);
     event RewardsCalculated(uint256 indexed epoch,uint256 lcbackamount,uint256 bonusamount,uint256 swaplcamount);
     event EndPlayerTime(uint256 epoch, uint256 blockNumber);
     event EndBankerTime(uint256 epoch, uint256 blockNumber);
@@ -212,14 +211,12 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         // CurrentEpoch refers to previous round (n-1)
         require(epoch == currentEpoch, "Epoch");
         require(rounds[currentEpoch].startBlock != 0, "Has started");
-        require(block.number >= rounds[currentEpoch].lockBlock, "After lockBlock");
-        require(block.number <= rounds[currentEpoch].lockBlock.add(intervalBlocks), "Within intervalBlocks");
+        require(block.number >= rounds[currentEpoch].lockBlock && block.number <= rounds[currentEpoch].lockBlock.add(intervalBlocks), "Within interval");
 
         // Increment currentEpoch to current round (n)
         currentEpoch = currentEpoch + 1;
         _startRound(currentEpoch, bankHash);
-        require(rounds[currentEpoch].startBlock < playerEndBlock, "startBlock");
-        require(rounds[currentEpoch].lockBlock <= playerEndBlock, "lockBlock");
+        require(rounds[currentEpoch].startBlock < playerEndBlock && rounds[currentEpoch].lockBlock <= playerEndBlock, "playerTime");
     }
 
     // end player time, triggers banker time
@@ -251,8 +248,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     function sendSecret(uint256 epoch, uint256 bankSecret) public onlyAdmin whenNotPaused{
         Round storage round = rounds[epoch];
         require(round.lockBlock != 0, "Has locked");
-        require(block.number >= round.lockBlock, "After lockBlock");
-        require(block.number <= round.lockBlock.add(intervalBlocks), "Within intervalBlocks");
+        require(block.number >= round.lockBlock && block.number <= round.lockBlock.add(intervalBlocks), "Within interval");
         require(round.bankSecret == 0, "Revealed");
         require(keccak256(abi.encodePacked(bankSecret)) == round.bankHash, "Not matching");
 
@@ -285,13 +281,13 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             }
         }
         require(numberCount > 0, "numberCount > 0");
-        require(amount >= minBetAmount.mul(uint256(numberCount)), "minBetAmount limit");
-        require(amount <= round.maxBetAmount.mul(uint256(numberCount)), "maxBetAmount limit"); 
+        require(amount >= minBetAmount.mul(uint256(numberCount)) && amount <= round.maxBetAmount.mul(uint256(numberCount)), "range limit");
         uint256 maxBetAmount = 0;
+        uint256 betAmount = amount.div(uint256(numberCount));
         for (uint32 i = 0; i < 6; i ++) {
             if (numbers[i]) {
-                if(round.betAmounts[i].add(amount.div(uint256(numberCount))) > maxBetAmount){
-                    maxBetAmount = round.betAmounts[i].add(amount.div(uint256(numberCount)));
+                if(round.betAmounts[i].add(betAmount) > maxBetAmount){
+                    maxBetAmount = round.betAmounts[i].add(betAmount);
                 }
             }else{
                 if(round.betAmounts[i] > maxBetAmount){
@@ -313,7 +309,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         // Update round data
         round.totalAmount = round.totalAmount.add(amount);
         round.betUsers = round.betUsers.add(1);
-        uint256 betAmount = amount.div(uint256(numberCount));
         for (uint32 i = 0; i < 6; i ++) {
             if (numbers[i]) {
                 round.betAmounts[i] = round.betAmounts[i].add(betAmount);
@@ -414,7 +409,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             totalBonusAmount = 0;
             token.safeTransfer(masterChefAddress, tmpAmount);
             IMasterChef(masterChefAddress).updateBonus(masterChefBonusId);
-            emit ClaimBonus(tmpAmount);
         } 
         if(totalLotteryAmount > 0){
             tmpAmount = totalLotteryAmount;
@@ -467,8 +461,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(block.number >= rounds[currentEpoch].lockBlock, "Manual start");
         currentEpoch = currentEpoch + 1;
         _startRound(currentEpoch, bankHash);
-        require(rounds[currentEpoch].startBlock < playerEndBlock, "startBlock");
-        require(rounds[currentEpoch].lockBlock <= playerEndBlock, "lockBlock");
+        require(rounds[currentEpoch].startBlock < playerEndBlock && rounds[currentEpoch].lockBlock <= playerEndBlock, "playerTime");
     }
 
     function _startRound(uint256 epoch, bytes32 bankHash) internal {
@@ -485,7 +478,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // Calculate rewards for round
     function _calculateRewards(uint256 epoch) internal {
-        require(lcBackRate.add(bonusRate) <= TOTAL_RATE, "RateSum");
         require(rounds[epoch].bonusAmount == 0, "Rewards calculated");
         Round storage round = rounds[epoch];
 
@@ -585,16 +577,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         token.safeTransfer(address(msg.sender), tokenAmount);
 
         emit Withdraw(msg.sender, _diceTokenAmount);
-    }
-
-    // View function to see banker diceToken Value on frontend.
-    function canWithdrawToken(address bankerAddress) external view returns (uint256){
-        return bankerInfo[bankerAddress].diceTokenAmount.mul(netValue).div(1e12);    
-    }
-
-    // View function to see banker diceToken Value on frontend.
-    function calProfitRate(address bankerAddress) external view returns (uint256){
-        return netValue.mul(100).div(bankerInfo[bankerAddress].avgBuyValue);    
     }
 
     // Judge address is contract or not
