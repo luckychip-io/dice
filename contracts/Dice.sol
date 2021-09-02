@@ -38,11 +38,13 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public minBetAmount;
     uint256 public maxBetRatio = 5;
     uint256 public maxLostRatio = 300;
+    uint256 public withdrawFeeRatio = 10; // 0.1% for withdrawFee
     uint256 public feeAmount;
     uint256 public maxBankerAmount;
 
     address public adminAddress;
     address public lcAdminAddress;
+    address public devAddress;
     address public masterChefAddress;
     IBEP20 public token;
     IBEP20 public lcToken;
@@ -91,11 +93,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256[]) public userRounds;
     mapping(address => BankerInfo) public bankerInfo;
 
-    event AdminUpdated(uint256 indexed block, address adminAddress, address lcAdminAddress);
+    event AdminUpdated(uint256 indexed block, address adminAddress, address lcAdminAddress, address devAddress);
     event BlocksUpdated(uint256 indexed block, uint256 playerTimeBlocks, uint256 bankerTimeBlocks);
     event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate, uint256 lotteryRate, uint256 lcLotteryRate);
     event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
-    event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio);
+    event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio, uint256 withdrawFeeRatio);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
     event BetNumber(address indexed sender, uint256 indexed currentEpoch, bool[6] numbers, uint256 amount);
@@ -137,8 +139,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     modifier notContract() {
-        require(!_isContract(msg.sender), "no contract");
-        require(msg.sender == tx.origin, "no proxy");
+        require((!_isContract(msg.sender)) && (msg.sender == tx.origin), "no contract and no proxy");
         _;
     }
 
@@ -157,8 +158,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
 
     // set rates
     function setRates(uint256 _gapRate, uint256 _lcBackRate, uint256 _bonusRate, uint256 _lotteryRate, uint256 _lcLotteryRate) external onlyAdmin {
-        require(_gapRate <= 1000, "gapRate lt 10%");
-        require(_lcBackRate.add(_bonusRate).add(_lotteryRate).add(_lcLotteryRate) <= TOTAL_RATE, "rateSum");
+        require(_gapRate <= 1000 && _lcBackRate.add(_bonusRate).add(_lotteryRate).add(_lcLotteryRate) <= TOTAL_RATE, "rate limit");
         gapRate = _gapRate;
         lcBackRate = _lcBackRate;
         bonusRate = _bonusRate;
@@ -176,20 +176,21 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     // set ratios
-    function setRatios(uint256 _maxBetRatio, uint256 _maxLostRatio) external onlyAdmin {
-        require(_maxBetRatio <= 50, "maxBetRatio lt 0.5%");
-        require(_maxLostRatio <= 500, "maxLostRatio lt 5%");
+    function setRatios(uint256 _maxBetRatio, uint256 _maxLostRatio, uint256 _withdrawFeeRatio) external onlyAdmin {
+        require(_maxBetRatio <= 50 && _maxLostRatio <= 500 && _withdrawFeeRatio <= 50, "ratio limit");
         maxBetRatio = _maxBetRatio;
         maxLostRatio = _maxLostRatio;
-        emit RatiosUpdated(block.number, maxBetRatio, maxLostRatio);
+        withdrawFeeRatio = _withdrawFeeRatio;
+        emit RatiosUpdated(block.number, maxBetRatio, maxLostRatio, withdrawFeeRatio);
     }
 
     // set admin address
-    function setAdmin(address _adminAddress, address _lcAdminAddress) external onlyOwner {
-        require(_adminAddress != address(0) && _lcAdminAddress != address(0), "Zero");
+    function setAdmin(address _adminAddress, address _lcAdminAddress, address _devAddress) external onlyOwner {
+        require(_adminAddress != address(0) && _lcAdminAddress != address(0) && _devAddress != address(0), "Zero");
         adminAddress = _adminAddress;
         lcAdminAddress = _lcAdminAddress;
-        emit AdminUpdated(block.number, adminAddress, lcAdminAddress);
+        devAddress = _devAddress;
+        emit AdminUpdated(block.number, adminAddress, lcAdminAddress, devAddress);
     }
 
     // End banker time
@@ -574,6 +575,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         diceToken.burn(address(diceToken), _diceTokenAmount);
         uint256 tokenAmount = _diceTokenAmount.mul(netValue).div(1e12);
         bankerAmount = bankerAmount.sub(tokenAmount);
+        if (withdrawFeeRatio > 0){
+            uint256 withdrawFee = tokenAmount.mul(withdrawFeeRatio).div(TOTAL_RATE);
+            tokenAmount = tokenAmount.sub(withdrawFee);
+            token.safeTransfer(devAddress, withdrawFee);
+        }
         token.safeTransfer(address(msg.sender), tokenAmount);
 
         emit Withdraw(msg.sender, _diceTokenAmount);
@@ -586,6 +592,16 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             size := extcodesize(addr)
         }
         return size > 0;
+    }
+
+    // View function to see banker diceToken Value on frontend.
+    function canWithdrawToken(address bankerAddress) external view returns (uint256){
+        return bankerInfo[bankerAddress].diceTokenAmount.mul(netValue).div(1e12);    
+    }
+
+    // View function to see banker diceToken Value on frontend.
+    function calProfitRate(address bankerAddress) external view returns (uint256){
+        return netValue.mul(100).div(bankerInfo[bankerAddress].avgBuyValue);    
     }
 
     // Update the swap router.
