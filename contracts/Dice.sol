@@ -101,13 +101,13 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
     event BetNumber(address indexed sender, uint256 indexed currentEpoch, bool[6] numbers, uint256 amount);
-    event Claim(address indexed sender, uint256 indexed currentEpoch, uint256 amount);
-    event ClaimBonusLC(address indexed sender, uint256 amount);
+    event ClaimReward(address indexed sender, uint256 blockNumber, uint256 amount);
+    event ClaimBonusLC(address indexed sender, uint256 blockNumber, uint256 amount);
     event RewardsCalculated(uint256 indexed epoch,uint256 lcbackamount,uint256 bonusamount,uint256 swaplcamount);
     event EndPlayerTime(uint256 epoch, uint256 blockNumber);
     event EndBankerTime(uint256 epoch, uint256 blockNumber);
     event UpdateNetValue(uint256 epoch, uint256 blockNumber, uint256 netValue);
-    event Deposit(address indexed user, uint256 tokenAmount);    
+    event Deposit(address indexed user, uint256 tokenAmount);
     event Withdraw(address indexed user, uint256 diceTokenAmount);    
 
     constructor(
@@ -326,36 +326,72 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         emit BetNumber(msg.sender, currentEpoch, numbers, amount);
     }
 
-
     // Claim reward
-    function claim(uint256 epoch) external notContract nonReentrant {
-        require(rounds[epoch].startBlock != 0, "Not started");
-        require(block.number > rounds[epoch].lockBlock, "Not locked");
-        require(!ledger[epoch][msg.sender].claimed, "Rewards claimed");
+    function claimReward() external notContract nonReentrant {
+        address user = address(msg.sender);
+        (uint256 rewardAmount, uint256 startIndex, uint256 endIndex) = pendingReward(user);
 
-        uint256 reward;
-        BetInfo storage betInfo = ledger[epoch][msg.sender];
-        // Round valid, claim rewards
-        if (rounds[epoch].status == Status.Claimable) {
-            require(claimable(epoch, msg.sender), "Not claimable");
-            uint256 singleAmount = betInfo.amount.div(uint256(betInfo.numberCount));
-            reward = singleAmount.mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
-            reward = reward.add(singleAmount);
+        if (rewardAmount > 0){
+            uint256 epoch;
+            for(uint256 i = startIndex; i < endIndex; i ++){
+                epoch = userRounds[user][i];
+                ledger[epoch][user].claimed = true;
+            }
+
+            token.safeTransfer(user, rewardAmount);
+            emit ClaimReward(user, block.number, rewardAmount);
         }
-        // Round invalid, refund bet amount
-        else {
-            require(refundable(epoch, msg.sender), "Not refundable");
-            reward = ledger[epoch][msg.sender].amount;
+    }
+
+    // View pending reward
+    function pendingReward(address user) public view returns (uint256 rewardAmount, uint256 startIndex, uint256 endIndex) {
+        uint256 epoch;
+        uint256 roundRewardAmount = 0;
+        rewardAmount = 0;
+        startIndex = 0;
+        endIndex = 0;
+        if(userRounds[user].length > 0){
+            uint256 i = userRounds[user].length.sub(1);
+            while(i >= 0){
+                epoch = userRounds[user][i];
+                if (ledger[epoch][user].claimed){
+                    startIndex = i.add(1);
+                    break;
+                }
+                if(i == 0){
+                    break;
+                }
+                i = i.sub(1);
+            }
+
+            endIndex = startIndex;
+            for (i = startIndex; i < userRounds[user].length; i ++){
+                epoch = userRounds[user][i];
+                BetInfo storage betInfo = ledger[epoch][user];
+                Round storage round = rounds[epoch];
+                if (round.status == Status.Claimable){
+                    if(betInfo.numbers[round.finalNumber]){
+                        uint256 singleAmount = betInfo.amount.div(uint256(betInfo.numberCount));
+                        roundRewardAmount = singleAmount.mul(5).mul(TOTAL_RATE.sub(gapRate)).div(TOTAL_RATE);
+                        roundRewardAmount = roundRewardAmount.add(singleAmount);
+                        rewardAmount = rewardAmount.add(roundRewardAmount);
+                    }
+                    endIndex = endIndex.add(1);
+                }else{
+                    if(block.number > round.lockBlock.add(intervalBlocks)){
+                        rewardAmount = rewardAmount.add(betInfo.amount);
+                        endIndex = endIndex.add(1);
+                    }else{
+                        break;
+                    }
+                }
+            }
         }
-
-        betInfo.claimed = true;
-        token.safeTransfer(msg.sender, reward);
-
-        emit Claim(msg.sender, epoch, reward);
     }
 
     // Claim lc back
-    function claimLcBack(address user) external notContract nonReentrant {
+    function claimLcBack() external notContract nonReentrant {
+        address user = address(msg.sender);
         (uint256 lcAmount, uint256 startIndex, uint256 endIndex) = pendingLcBack(user);
 
         if (lcAmount > 0){
@@ -366,8 +402,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             }
 
             lcToken.safeTransfer(user, lcAmount);
+            emit ClaimBonusLC(user, block.number, lcAmount);
         }
-        emit ClaimBonusLC(user, lcAmount);
     }
 
     // View pending lc back
@@ -376,14 +412,25 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         uint256 roundLcAmount = 0;
         lcAmount = 0;
         startIndex = 0;
-        endIndex = userRounds[user].length;
-        for (uint256 i = userRounds[user].length - 1; i >= 0; i --){
-            epoch = userRounds[user][i];
-            BetInfo storage betInfo = ledger[epoch][msg.sender];
-            if (betInfo.lcClaimed){
-                startIndex = i.add(1);
-                break;
-            }else{
+        endIndex = 0;
+        if(userRounds[user].length > 0){
+            uint256 i = userRounds[user].length.sub(1);
+            while(i >= 0){
+                epoch = userRounds[user][i];
+                if (ledger[epoch][user].claimed){
+                    startIndex = i.add(1);
+                    break;
+                }
+                if(i == 0){
+                    break;
+                }
+                i = i.sub(1);
+            }
+
+            endIndex = startIndex;
+            for (i = startIndex; i < userRounds[user].length; i ++){
+                epoch = userRounds[user][i];
+                BetInfo storage betInfo = ledger[epoch][user];
                 Round storage round = rounds[epoch];
                 if (round.status == Status.Claimable){
                     if (betInfo.numbers[round.finalNumber]){
@@ -394,9 +441,17 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
                     }else{
                         roundLcAmount = betInfo.amount.mul(gapRate).div(TOTAL_RATE).mul(lcBackRate).div(TOTAL_RATE);
                     }
-
+    
                     roundLcAmount = roundLcAmount.mul(round.swapLcAmount).div(round.lcBackAmount);
                     lcAmount = lcAmount.add(roundLcAmount);
+                    endIndex = endIndex.add(1);
+                }else{
+                    if(block.number > round.lockBlock.add(intervalBlocks)){
+                        endIndex = endIndex.add(1);
+                        continue;
+                    }else{
+                        break;
+                    }
                 }
             }
         }
@@ -442,19 +497,15 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         return (values, cursor.add(length));
     }
 
+    // Return user bet info
     function getUserBetInfo(uint256 epoch, address user) external view returns (uint256, uint16, bool[6] memory, bool, bool){
         BetInfo storage betInfo = ledger[epoch][user];
         return (betInfo.amount, betInfo.numberCount, betInfo.numbers, betInfo.claimed, betInfo.lcClaimed);
     }
 
-    // Get the claimable stats of specific epoch and user account
-    function claimable(uint256 epoch, address user) public view returns (bool) {
-        return (rounds[epoch].status == Status.Claimable) && (ledger[epoch][user].numbers[rounds[epoch].finalNumber]);
-    }
-
-    // Get the refundable stats of specific epoch and user account
-    function refundable(uint256 epoch, address user) public view returns (bool) {
-        return (rounds[epoch].status != Status.Claimable) && block.number > rounds[epoch].lockBlock.add(intervalBlocks) && ledger[epoch][user].amount != 0;
+    // Return betAmounts of a round
+    function getRoundBetAmounts(uint256 epoch) external view returns (uint256[6] memory){
+        return rounds[epoch].betAmounts;
     }
 
     // Manual Start round. Previous round n-1 must lock

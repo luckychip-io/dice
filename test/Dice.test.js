@@ -8,7 +8,7 @@ const Dice = artifacts.require('Dice');
 const MockBEP20 = artifacts.require('libs/MockBEP20');
 const MasterChef = artifacts.require('MasterChef');
 
-contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, dev, minter]) => {
+contract('Dice', ([alice, bob, carol, david, admin, lcAdmin, dev0, dev1, dev2, safuAddr, treasuryAddr, minter]) => {
     beforeEach(async () => {
 		this.token = await MockBEP20.new('Wrapped BNB', 'WBNB', '300000000', { from: minter });
 		await this.token.transfer(alice, '30000000', {from: minter});
@@ -17,7 +17,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, dev, mi
 		await this.token.transfer(david, '30000000', {from: minter});
 
         this.lc = await LCToken.new({ from: minter});
-		this.chef = await MasterChef.new(this.lc.address, admin, refFeeAddr, '1000', '100', '900000','90000', '10000', { from: minter });	
+		this.chef = await MasterChef.new(this.lc.address, dev0, dev1, dev2, safuAddr, treasuryAddr, '1000', '100', '900000','32400', '24300', '24300', '10000', { from: minter });	
         await this.lc.transferOwnership(this.chef.address, { from: minter });
 
         this.diceToken = await DiceToken.new('LuckyWBNB', 'LuckyWBNB', { from: minter }); 
@@ -34,7 +34,7 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, dev, mi
     
     });
     it('real case', async () => {
-		await this.dice.setAdmin(admin, lcAdmin, dev, {from: minter});
+		await this.dice.setAdmin(admin, lcAdmin, dev2, {from: minter});
 
 		await this.token.approve(this.dice.address, '30000000', { from: alice });
 		await this.token.approve(this.dice.address, '30000000', { from: bob });
@@ -71,7 +71,10 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, dev, mi
 
 		lockBlock = round[1];
 		console.log(`Current block: ${(await time.latestBlock())},${lockBlock}`);
-		await expectRevert(this.dice.claim(1, {from: alice}), 'Not locked');
+        
+        let reward = await this.dice.pendingReward(alice, {from: alice});
+		console.log(`reward: ${reward[0]},${reward[1]},${reward[2]}`);
+		assert.equal(reward[0].toString(), '0');
 		await time.advanceBlockTo(lockBlock);
 		let newRandomNumber = ethers.utils.hexlify(ethers.utils.randomBytes(32));
 		let newBankHash = ethers.utils.keccak256(newRandomNumber);
@@ -90,15 +93,17 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, dev, mi
 		betInfo = await this.dice.ledger(1, bob, {from: alice});
 		console.log(`${betInfo[0]},${betInfo[1]},${betInfo[2]},${betInfo[3]},${betInfo[4]}`)
 
-		canClaim = await this.dice.claimable(1, alice, {from: alice});
-		if(canClaim){
-			await this.dice.claim(1, {from: alice});
-			console.log(canClaim, 'claim for alice');
+		reward = await this.dice.pendingReward(alice, {from: alice});
+		if(reward[0] > 0){
+			await this.dice.claimReward({from: alice});
+			console.log(`claim for alice,${reward[0]},${reward[1]},${reward[2]}`);
 		}else{
-			await expectRevert(this.dice.claim(1, {from: alice}), 'Not claimable');
-		}
+			console.log('no reward for alice');
+        }
 
-		await this.dice.claim(1, {from: bob});
+		reward = await this.dice.pendingReward(bob, {from: bob});
+		assert.equal((reward[0]).toString(), '23000');
+		await this.dice.claimReward({from: bob});
 		console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());		
 		console.log('bob balance: ', (await this.token.balanceOf(bob)).toString());		
 		console.log('bankerAmount',(await this.dice.bankerAmount()).toString());
@@ -128,20 +133,20 @@ contract('Dice', ([alice, bob, carol, david, refFeeAddr, admin, lcAdmin, dev, mi
 		}
 		console.log(`finalNumber,${round[11]}`);
 
-		canClaim = await this.dice.claimable(2, alice, {from: alice});
-        if(canClaim){
-            await this.dice.claim(2, {from: alice});
-            console.log(canClaim, 'claim for alice');
-        }else{
-            await expectRevert(this.dice.claim(2, {from: alice}), 'Not claimable');
+		reward = await this.dice.pendingReward(alice, {from: alice});
+		if(reward[0] > 0){
+			await this.dice.claimReward({from: alice});
+			console.log(`claim for alice,${reward[0]},${reward[1]},${reward[2]}`);
+		}else{
+			console.log('no reward for alice');
         }
 
-		canClaim = await this.dice.claimable(2, bob, {from: bob});
-        if(canClaim){
-            await this.dice.claim(2, {from: bob});
-            console.log(canClaim, 'claim for alice');
-        }else{
-            await expectRevert(this.dice.claim(2, {from: bob}), 'Not claimable');
+		reward = await this.dice.pendingReward(bob, {from: bob});
+		if(reward[0] > 0){
+			await this.dice.claimReward({from: bob});
+			console.log(`claim for bob,${reward[0]},${reward[1]},${reward[2]}`);
+		}else{
+			console.log('no reward for bob');
         }
 
         console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());
