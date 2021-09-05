@@ -54,7 +54,7 @@ contract('Dice', ([alice, bob, carol, david, admin, lcAdmin, dev0, dev1, dev2, s
 		let randomNumber = ethers.utils.hexlify(ethers.utils.randomBytes(32));
 		let bankHash = ethers.utils.keccak256(randomNumber);
 		console.log(randomNumber, bankHash);
-		await expectRevert(this.dice.endBankerTime(1, bankHash, {from: minter}), 'admin: wut?');
+		await expectRevert(this.dice.endBankerTime(1, bankHash, {from: minter}), 'not admin');
 		await this.dice.endBankerTime(1, bankHash, {from: admin});
 
 		console.log('alice balance: ', (await this.token.balanceOf(alice)).toString());		

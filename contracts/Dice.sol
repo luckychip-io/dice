@@ -54,6 +54,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     enum Status {
         Pending,
         Open,
+        Locked,
         Claimable,
         Expired
     }
@@ -139,12 +140,12 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     modifier notContract() {
-        require((!_isContract(msg.sender)) && (msg.sender == tx.origin), "no contract and no proxy");
+        require((!_isContract(msg.sender)) && (msg.sender == tx.origin), "no contract");
         _;
     }
 
     modifier onlyAdmin() {
-        require(msg.sender == adminAddress, "admin: wut?");
+        require(msg.sender == adminAddress, "not admin");
         _;
     }
 
@@ -211,8 +212,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     function executeRound(uint256 epoch, bytes32 bankHash) external onlyAdmin whenNotPaused{
         // CurrentEpoch refers to previous round (n-1)
         require(epoch == currentEpoch, "Epoch");
-        require(rounds[currentEpoch].startBlock != 0, "Has started");
         require(block.number >= rounds[currentEpoch].lockBlock && block.number <= rounds[currentEpoch].lockBlock.add(intervalBlocks), "Within interval");
+        rounds[currentEpoch].status = Status.Locked;
 
         // Increment currentEpoch to current round (n)
         currentEpoch = currentEpoch + 1;
@@ -223,6 +224,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // end player time, triggers banker time
     function endPlayerTime(uint256 epoch, uint256 bankSecret) external onlyAdmin whenNotPaused{
         require(epoch == currentEpoch, "epoch");
+        rounds[currentEpoch].status = Status.Locked; 
         sendSecret(epoch, bankSecret);
         _pause();
         _updateNetValue(epoch);
@@ -248,7 +250,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // send bankSecret
     function sendSecret(uint256 epoch, uint256 bankSecret) public onlyAdmin whenNotPaused{
         Round storage round = rounds[epoch];
-        require(round.lockBlock != 0, "Has locked");
+        require(round.status == Status.Locked, "Has locked");
         require(block.number >= round.lockBlock && block.number <= round.lockBlock.add(intervalBlocks), "Within interval");
         require(round.bankSecret == 0, "Revealed");
         require(keccak256(abi.encodePacked(bankSecret)) == round.bankHash, "Not matching");
