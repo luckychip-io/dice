@@ -582,7 +582,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
             uint256 tmpBankerAmount = bankerAmount;
             for (uint32 i = 0; i < 6; i ++){
                 if (i == round.finalNumber){
-                    gapAmount = gapAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE);
+                    gapAmount = round.betAmounts[i].mul(5).mul(gapRate).div(TOTAL_RATE);
                 }else{
                     gapAmount = round.betAmounts[i].mul(gapRate).div(TOTAL_RATE);
                 }
