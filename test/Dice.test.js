@@ -27,7 +27,7 @@ contract('Dice', ([alice, bob, carol, david, admin, lcAdmin, dev0, dev1, dev2, s
 		this.lp1 = await MockBEP20.new('LPToken', 'LP1', '10000000', { from: minter });
 		await this.lp1.transfer(carol, '100000', {from:minter});
 		await this.lp1.transfer(david, '100000', {from:minter});
-		await this.chef.add('1000', '90', this.lp1.address, true, { from: minter });
+		await this.chef.add('1000', '90', this.lp1.address, { from: minter });
 		await this.chef.addBonus(this.token.address, { from: minter });
 		await this.lp1.approve(this.chef.address, '100000', {from:carol});
 		await this.lp1.approve(this.chef.address, '100000', {from:david});

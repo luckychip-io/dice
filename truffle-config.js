@@ -36,7 +36,7 @@ module.exports = {
           enabled: true,
           //runs: 999999
           //runs: 200
-          runs: 1500
+          runs: 9999
         },
         evmVersion: "istanbul"
       }

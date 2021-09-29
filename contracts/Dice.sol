@@ -41,6 +41,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public withdrawFeeRatio = 10; // 0.1% for withdrawFee
     uint256 public feeAmount;
     uint256 public maxBankerAmount;
+    uint256 public lcStackMultiplier;
+    uint256 public lcStackConstant;
 
     address public adminAddress;
     address public lcAdminAddress;
@@ -99,6 +101,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 lcBackRate, uint256 bonusRate, uint256 lotteryRate, uint256 lcLotteryRate);
     event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
     event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio, uint256 withdrawFeeRatio);
+    event SetLcStack(uint256 indexed block, uint256 lcStackMultiplier, uint256 lcStackConstant);
+    event SetSwapRouter(uint256 indexed block, address swapRouterAddr);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
     event BetNumber(address indexed sender, uint256 indexed currentEpoch, bool[6] numbers, uint256 amount);
@@ -135,6 +139,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         minBetAmount = _minBetAmount;
         feeAmount = _feeAmount;
         maxBankerAmount = _maxBankerAmount;
+        lcStackMultiplier = TOTAL_RATE;
+        lcStackConstant = _maxBankerAmount;
         netValue = uint256(1e12);
         _pause();
     }
@@ -192,6 +198,13 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         lcAdminAddress = _lcAdminAddress;
         devAddress = _devAddress;
         emit AdminUpdated(block.number, adminAddress, lcAdminAddress, devAddress);
+    }
+
+    // set lcStack variables
+    function setLcStack(uint256 _lcStackMultiplier, uint256 _lcStackConstant) external onlyOwner {
+        lcStackMultiplier = _lcStackMultiplier;
+        lcStackConstant = _lcStackConstant;
+        emit SetLcStack(block.number, lcStackMultiplier, lcStackMultiplier);
     }
 
     // End banker time
@@ -608,6 +621,9 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     function deposit(uint256 _tokenAmount) public whenPaused nonReentrant notContract {
         require(_tokenAmount > 0, "Amount > 0");
         require(bankerAmount.add(_tokenAmount) < maxBankerAmount, 'maxBankerAmount Limit');
+        if(address(token) != address(lcToken)){
+            require(_tokenAmount < getLimitFromLcStack(address(msg.sender)), 'lcStack limit');
+        }
         BankerInfo storage banker = bankerInfo[msg.sender];
         token.safeTransferFrom(address(msg.sender), address(this), _tokenAmount);
         uint256 diceTokenAmount = _tokenAmount.mul(1e12).div(netValue);
@@ -629,13 +645,22 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         uint256 tokenAmount = _diceTokenAmount.mul(netValue).div(1e12);
         bankerAmount = bankerAmount.sub(tokenAmount);
         if (withdrawFeeRatio > 0){
-            uint256 withdrawFee = tokenAmount.mul(withdrawFeeRatio).div(TOTAL_RATE);
-            tokenAmount = tokenAmount.sub(withdrawFee);
-            token.safeTransfer(devAddress, withdrawFee);
+            uint256 freeAmount = IMasterChef(masterChefAddress).getStackLcDice(msg.sender).mul(lcStackMultiplier).div(TOTAL_RATE); 
+            if(tokenAmount > freeAmount){
+                uint256 withdrawFee = tokenAmount.sub(freeAmount).mul(withdrawFeeRatio).div(TOTAL_RATE);
+                tokenAmount = tokenAmount.sub(withdrawFee);
+                token.safeTransfer(devAddress, withdrawFee);
+            }
         }
         token.safeTransfer(address(msg.sender), tokenAmount);
 
         emit Withdraw(msg.sender, _diceTokenAmount);
+    }
+
+    // get deposit limit from lcStack
+    function getLimitFromLcStack(address _user) public view returns (uint256 limit) {
+        uint256 lcStackAmount = IMasterChef(masterChefAddress).getStackLcDice(_user);
+        limit = lcStackAmount.mul(lcStackMultiplier).div(TOTAL_RATE).add(lcStackConstant);
     }
 
     // Judge address is contract or not
@@ -661,6 +686,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     function updateSwapRouter(address _router) external onlyAdmin {
         require(_router != address(0), "Zero");
         swapRouter = ILuckyChipRouter02(_router);
+        emit SetSwapRouter(block.number, _router);
     }
 
     function _safeTransferBNB(address to, uint256 value) internal {
