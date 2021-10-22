@@ -6,11 +6,11 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./interfaces/IBEP20.sol";
+import "./interfaces/ILuckyChipRouter02.sol";
+import "./interfaces/ILuckyPower.sol";
+import "./libraries/SafeBEP20.sol";
 import "./DiceToken.sol";
-import "./libs/IBEP20.sol";
-import "./libs/SafeBEP20.sol";
-import "./libs/ILuckyChipRouter02.sol";
-import "./libs/IMasterChef.sol";
 
 contract Dice is Ownable, ReentrancyGuard, Pausable {
     using SafeMath for uint256;
@@ -25,7 +25,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     uint256 public totalBonusAmount;
     uint256 public totalLotteryAmount;
     uint256 public totalLcLotteryAmount;
-    uint256 public masterChefBonusId;
     uint256 public intervalBlocks;
     uint256 public playerTimeBlocks;
     uint256 public bankerTimeBlocks;
@@ -47,7 +46,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     address public adminAddress;
     address public lcAdminAddress;
     address public devAddress;
-    address public masterChefAddress;
+    address public luckyPowerAddress;
     IBEP20 public token;
     IBEP20 public lcToken;
     DiceToken public diceToken;    
@@ -119,8 +118,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         address _tokenAddress,
         address _lcTokenAddress,
         address _diceTokenAddress,
-        address _masterChefAddress,
-        uint256 _masterChefBonusId,
+        address _luckyPowerAddress,
         uint256 _intervalBlocks,
         uint256 _playerTimeBlocks,
         uint256 _bankerTimeBlocks,
@@ -131,8 +129,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         token = IBEP20(_tokenAddress);
         lcToken = IBEP20(_lcTokenAddress);
         diceToken = DiceToken(_diceTokenAddress);
-        masterChefAddress = _masterChefAddress;
-        masterChefBonusId = _masterChefBonusId;
+        luckyPowerAddress = _luckyPowerAddress;
         intervalBlocks = _intervalBlocks;
         playerTimeBlocks = _playerTimeBlocks;
         bankerTimeBlocks = _bankerTimeBlocks;
@@ -478,8 +475,8 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         if(totalBonusAmount > 0){
             tmpAmount = totalBonusAmount;
             totalBonusAmount = 0;
-            token.safeTransfer(masterChefAddress, tmpAmount);
-            IMasterChef(masterChefAddress).updateBonus(masterChefBonusId);
+            token.safeTransfer(luckyPowerAddress, tmpAmount);
+            ILuckyPower(luckyPowerAddress).updateBonus(address(token), tmpAmount);
         } 
         if(totalLotteryAmount > 0){
             tmpAmount = totalLotteryAmount;
@@ -621,9 +618,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     function deposit(uint256 _tokenAmount) public whenPaused nonReentrant notContract {
         require(_tokenAmount > 0, "Amount > 0");
         require(bankerAmount.add(_tokenAmount) < maxBankerAmount, 'maxBankerAmount Limit');
-        if(address(token) != address(lcToken)){
-            require(_tokenAmount < getLimitFromLcStack(address(msg.sender)), 'lcStack limit');
-        }
         BankerInfo storage banker = bankerInfo[msg.sender];
         token.safeTransferFrom(address(msg.sender), address(this), _tokenAmount);
         uint256 diceTokenAmount = _tokenAmount.mul(1e12).div(netValue);
@@ -645,7 +639,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         uint256 tokenAmount = _diceTokenAmount.mul(netValue).div(1e12);
         bankerAmount = bankerAmount.sub(tokenAmount);
         if (withdrawFeeRatio > 0){
-            uint256 freeAmount = IMasterChef(masterChefAddress).getStackLcDice(msg.sender).mul(lcStackMultiplier).div(TOTAL_RATE); 
+            uint256 freeAmount = ILuckyPower(luckyPowerAddress).getPower(msg.sender);
             if(tokenAmount > freeAmount){
                 uint256 withdrawFee = tokenAmount.sub(freeAmount).mul(withdrawFeeRatio).div(TOTAL_RATE);
                 tokenAmount = tokenAmount.sub(withdrawFee);
@@ -655,12 +649,6 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         token.safeTransfer(address(msg.sender), tokenAmount);
 
         emit Withdraw(msg.sender, _diceTokenAmount);
-    }
-
-    // get deposit limit from lcStack
-    function getLimitFromLcStack(address _user) public view returns (uint256 limit) {
-        uint256 lcStackAmount = IMasterChef(masterChefAddress).getStackLcDice(_user);
-        limit = lcStackAmount.mul(lcStackMultiplier).div(TOTAL_RATE).add(lcStackConstant);
     }
 
     // Judge address is contract or not

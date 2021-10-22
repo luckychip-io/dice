@@ -2,7 +2,7 @@
 
 pragma solidity 0.6.12;
 
-import "./libs/BEP20.sol";
+import "./libraries/BEP20.sol";
 
 // Dice token with Governance.
 contract DiceToken is BEP20 {
