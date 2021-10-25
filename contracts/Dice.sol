@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IBEP20.sol";
+import "./interfaces/ILCToken.sol";
 import "./interfaces/ILuckyChipRouter02.sol";
 import "./interfaces/ILuckyPower.sol";
 import "./libraries/SafeBEP20.sol";
@@ -47,7 +48,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     address public lotteryAddr;
     ILuckyPower public luckyPower;
     IBEP20 public token;
-    IBEP20 public lcToken;
+    ILCToken public lcToken;
     DiceToken public diceToken;    
     ILuckyChipRouter02 public swapRouter;
 
@@ -126,7 +127,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         uint256 _maxBankerAmount
     ) public {
         token = IBEP20(_tokenAddr);
-        lcToken = IBEP20(_lcTokenAddr);
+        lcToken = ILCToken(_lcTokenAddr);
         diceToken = DiceToken(_diceTokenAddr);
         luckyPower = ILuckyPower(_luckyPowerAddr);
         devAddr = _devAddr;
@@ -395,6 +396,16 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     // Claim all bonus to LuckyPower
     function _claimBonusAndLottery() internal {
         uint256 tmpAmount = 0;
+        if(totalDevAmount > 0){
+            tmpAmount = totalDevAmount;
+            totalDevAmount = 0;
+            token.safeTransfer(devAddr, tmpAmount);
+        }
+        if(totalBurnAmount > 0){
+            tmpAmount = totalBurnAmount;
+            totalBurnAmount = 0;
+            lcToken.burn(address(this), tmpAmount);
+        }
         if(totalBonusAmount > 0){
             tmpAmount = totalBonusAmount;
             totalBonusAmount = 0;
