@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IBEP20.sol";
 import "./interfaces/ILCToken.sol";
 import "./interfaces/ILuckyChipRouter02.sol";
+import "./interfaces/IBetMining.sol";
 import "./interfaces/ILuckyPower.sol";
 import "./libraries/SafeBEP20.sol";
 import "./DiceToken.sol";
@@ -51,6 +52,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     ILCToken public lcToken;
     DiceToken public diceToken;    
     ILuckyChipRouter02 public swapRouter;
+    IBetMining public betMining;
 
     enum Status {
         Pending,
@@ -101,6 +103,7 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio, uint256 withdrawFeeRatio);
     event SetSwapRouter(uint256 indexed block, address swapRouterAddr);
     event SetLuckyPower(uint256 indexed block, address luckyPowerAddr);
+    event SetBetMining(uint256 indexed block, address betMiningAddr);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
     event SendSecretRound(uint256 indexed epoch, uint256 blockNumber, uint256 bankSecret, uint32 finalNumber);
     event BetNumber(address indexed sender, uint256 indexed currentEpoch, bool[6] numbers, uint256 amount);
@@ -327,6 +330,14 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         betInfo.amount = amount;
         betInfo.numberCount = numberCount;
         userRounds[msg.sender].push(currentEpoch);
+
+        if(address(betMining) != address(0)){
+            betMining.bet(msg.sender, address(token), amount);
+        }
+
+        if(address(luckyPower) != address(0)){
+            luckyPower.updatePower(msg.sender);
+        }
 
         emit BetNumber(msg.sender, currentEpoch, numbers, amount);
     }
@@ -618,6 +629,13 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
         require(_luckyPower != address(0), "Zero");
         luckyPower = ILuckyPower(_luckyPower);
         emit SetLuckyPower(block.number, _luckyPower);
+    }
+
+    // Update the lucky power.
+    function updateBetMining(address _betMiningAddr) external onlyAdmin {
+        require(_betMiningAddr != address(0), "Zero");
+        betMining = IBetMining(_betMiningAddr);
+        emit SetBetMining(block.number, _betMiningAddr);
     }
 
     function _safeTransferBNB(address to, uint256 value) internal {

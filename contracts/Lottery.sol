@@ -6,9 +6,10 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IBEP20.sol";
+import "./interfaces/ILottery.sol";
 import "./libraries/SafeBEP20.sol";
 
-contract DiceLottery is Ownable, ReentrancyGuard{
+contract Lottery is ILottery, Ownable, ReentrancyGuard{
     using SafeMath for uint256;
     using SafeBEP20 for IBEP20;
 
@@ -50,5 +51,8 @@ contract DiceLottery is Ownable, ReentrancyGuard{
             emit ClaimLottery(msg.sender, block.number, amount); 
         }
     }
-
+    
+    function getLuckyPower(address user) external override view returns (uint256){
+        return balanceOf[user];
+    }
 }
