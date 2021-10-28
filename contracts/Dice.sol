@@ -8,13 +8,14 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IBEP20.sol";
 import "./interfaces/ILCToken.sol";
+import "./interfaces/IDice.sol";
 import "./interfaces/ILuckyChipRouter02.sol";
 import "./interfaces/IBetMining.sol";
 import "./interfaces/ILuckyPower.sol";
 import "./libraries/SafeBEP20.sol";
 import "./DiceToken.sol";
 
-contract Dice is Ownable, ReentrancyGuard, Pausable {
+contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
     using SafeMath for uint256;
     using SafeBEP20 for IBEP20;
 
@@ -613,6 +614,11 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     }
 
     // View function to see banker diceToken Value on frontend.
+    function canWithdrawAmount(uint256 _amount) external override view returns (uint256){
+        return _amount.mul(netValue).div(1e12);    
+    }
+
+    // View function to see banker diceToken Value on frontend.
     function calProfitRate(address bankerAddr) external view returns (uint256){
         return netValue.mul(100).div(bankerInfo[bankerAddr].avgBuyValue);    
     }
@@ -641,6 +647,10 @@ contract Dice is Ownable, ReentrancyGuard, Pausable {
     function _safeTransferBNB(address to, uint256 value) internal {
         (bool success, ) = to.call{gas: 23000, value: value}("");
         require(success, 'BNB_TRANSFER_FAILED');
+    }
+
+    function tokenAddr() public override view returns (address){
+        return address(token);
     }
 }
 
