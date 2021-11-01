@@ -645,7 +645,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         emit SetSwapRouter(block.number, _router);
     }
 
-    // Update the lucky power.
+    // Update the oracle.
     function setOracle(address _oracleAddr) external onlyAdmin {
         require(_oracleAddr != address(0), "Zero");
         oracle = IOracle(_oracleAddr);
@@ -659,7 +659,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         emit SetLuckyPower(block.number, _luckyPowerAddr);
     }
 
-    // Update the lucky power.
+    // Update the bet mining.
     function setBetMining(address _betMiningAddr) external onlyAdmin {
         require(_betMiningAddr != address(0), "Zero");
         betMining = IBetMining(_betMiningAddr);
