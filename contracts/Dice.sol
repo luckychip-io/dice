@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IBEP20.sol";
 import "./interfaces/ILCToken.sol";
 import "./interfaces/IDice.sol";
+import "./interfaces/IOracle.sol";
 import "./interfaces/ILuckyChipRouter02.sol";
 import "./interfaces/IBetMining.sol";
 import "./interfaces/ILuckyPower.sol";
@@ -44,10 +45,12 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
     uint256 public withdrawFeeRatio = 10; // 0.1% for withdrawFee
     uint256 public feeAmount;
     uint256 public maxBankerAmount;
+    uint256 public freeAmountMultiplier = 1;
 
     address public adminAddr;
     address public devAddr;
     address public lotteryAddr;
+    IOracle public oracle;
     ILuckyPower public luckyPower;
     IBEP20 public token;
     ILCToken public lcToken;
@@ -97,12 +100,14 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256[]) public userRounds;
     mapping(address => BankerInfo) public bankerInfo;
 
-    event AdminUpdated(uint256 indexed block, address adminAddr, address devAddr, address lotteryAddr);
-    event BlocksUpdated(uint256 indexed block, uint256 playerTimeBlocks, uint256 bankerTimeBlocks);
-    event RatesUpdated(uint256 indexed block, uint256 gapRate, uint256 devRate, uint256 burnRate, uint256 bonusRate, uint256 lotteryRate);
-    event AmountsUpdated(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
-    event RatiosUpdated(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio, uint256 withdrawFeeRatio);
+    event SetAdmin(uint256 indexed block, address adminAddr, address devAddr, address lotteryAddr);
+    event SetBlocks(uint256 indexed block, uint256 playerTimeBlocks, uint256 bankerTimeBlocks);
+    event SetRates(uint256 indexed block, uint256 gapRate, uint256 devRate, uint256 burnRate, uint256 bonusRate, uint256 lotteryRate);
+    event SetAmounts(uint256 indexed block, uint256 minBetAmount, uint256 feeAmount, uint256 maxBankerAmount);
+    event SetRatios(uint256 indexed block, uint256 maxBetRatio, uint256 maxLostRatio, uint256 withdrawFeeRatio);
+    event SetMultiplier(uint256 indexed block, uint256 multiplier);
     event SetSwapRouter(uint256 indexed block, address swapRouterAddr);
+    event SetOracle(uint256 indexed block, address oracleAddr);
     event SetLuckyPower(uint256 indexed block, address luckyPowerAddr);
     event SetBetMining(uint256 indexed block, address betMiningAddr);
     event StartRound(uint256 indexed epoch, uint256 blockNumber, bytes32 bankHash);
@@ -161,7 +166,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         intervalBlocks = _intervalBlocks;
         playerTimeBlocks = _playerTimeBlocks;
         bankerTimeBlocks = _bankerTimeBlocks;
-        emit BlocksUpdated(block.number, playerTimeBlocks, bankerTimeBlocks);
+        emit SetBlocks(block.number, playerTimeBlocks, bankerTimeBlocks);
     }
 
     // set rates
@@ -172,7 +177,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         burnRate = _burnRate;
         bonusRate = _bonusRate;
         lotteryRate = _lotteryRate;
-        emit RatesUpdated(block.number, gapRate, devRate, burnRate, bonusRate, lotteryRate);
+        emit SetRates(block.number, gapRate, devRate, burnRate, bonusRate, lotteryRate);
     }
 
     // set amounts
@@ -180,7 +185,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         minBetAmount = _minBetAmount;
         feeAmount = _feeAmount;
         maxBankerAmount = _maxBankerAmount;
-        emit AmountsUpdated(block.number, minBetAmount, feeAmount, maxBankerAmount);
+        emit SetAmounts(block.number, minBetAmount, feeAmount, maxBankerAmount);
     }
 
     // set ratios
@@ -189,7 +194,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         maxBetRatio = _maxBetRatio;
         maxLostRatio = _maxLostRatio;
         withdrawFeeRatio = _withdrawFeeRatio;
-        emit RatiosUpdated(block.number, maxBetRatio, maxLostRatio, withdrawFeeRatio);
+        emit SetRatios(block.number, maxBetRatio, maxLostRatio, withdrawFeeRatio);
     }
 
     // set admin address
@@ -198,7 +203,13 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         adminAddr = _adminAddr;
         devAddr = _devAddr;
         lotteryAddr = _lotteryAddr;
-        emit AdminUpdated(block.number, adminAddr, devAddr, lotteryAddr);
+        emit SetAdmin(block.number, adminAddr, devAddr, lotteryAddr);
+    }
+
+    function setFreeAmountMultiplier(uint256 _multiplier) external onlyOwner{
+        require(_multiplier >= 1 && _multiplier <= 100, "multiplier range");
+        freeAmountMultiplier = _multiplier;
+        emit SetMultiplier(block.number, _multiplier);
     }
 
     // End banker time
@@ -431,7 +442,6 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
             totalLotteryAmount = 0;
             token.safeTransfer(lotteryAddr, tmpAmount);
         }
-
     }
 
     // Return round epochs that a user has participated
@@ -586,16 +596,21 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         diceToken.burn(address(diceToken), _diceTokenAmount);
         uint256 tokenAmount = _diceTokenAmount.mul(netValue).div(1e12);
         bankerAmount = bankerAmount.sub(tokenAmount);
-        if (withdrawFeeRatio > 0){
-            uint256 freeAmount = luckyPower.getPower(msg.sender);
-            if(tokenAmount > freeAmount){
-                uint256 withdrawFee = tokenAmount.sub(freeAmount).mul(withdrawFeeRatio).div(TOTAL_RATE);
-                tokenAmount = tokenAmount.sub(withdrawFee);
-                token.safeTransfer(devAddr, withdrawFee);
+
+        if(address(token) != address(lcToken)){
+            if (withdrawFeeRatio > 0 && address(luckyPower) != address(0) && address(oracle) != address(0)){
+                uint256 freeAmount = luckyPower.getPower(msg.sender).mul(freeAmountMultiplier);
+                uint256 transLcAmount = oracle.getQuantity(address(token), tokenAmount);
+                if(transLcAmount > freeAmount){
+                    uint256 withdrawFee = transLcAmount.sub(freeAmount).mul(tokenAmount).div(transLcAmount).mul(withdrawFeeRatio).div(TOTAL_RATE);
+                    tokenAmount = tokenAmount.sub(withdrawFee);
+                    token.safeTransfer(devAddr, withdrawFee);
+                }
             }
         }
+        
         token.safeTransfer(address(msg.sender), tokenAmount);
-
+        
         emit Withdraw(msg.sender, _diceTokenAmount);
     }
 
@@ -624,21 +639,28 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
     }
 
     // Update the swap router.
-    function updateSwapRouter(address _router) external onlyAdmin {
+    function setSwapRouter(address _router) external onlyAdmin {
         require(_router != address(0), "Zero");
         swapRouter = ILuckyChipRouter02(_router);
         emit SetSwapRouter(block.number, _router);
     }
 
     // Update the lucky power.
-    function updateLuckyPower(address _luckyPower) external onlyAdmin {
-        require(_luckyPower != address(0), "Zero");
-        luckyPower = ILuckyPower(_luckyPower);
-        emit SetLuckyPower(block.number, _luckyPower);
+    function setOracle(address _oracleAddr) external onlyAdmin {
+        require(_oracleAddr != address(0), "Zero");
+        oracle = IOracle(_oracleAddr);
+        emit SetOracle(block.number, _oracleAddr);
     }
 
     // Update the lucky power.
-    function updateBetMining(address _betMiningAddr) external onlyAdmin {
+    function setLuckyPower(address _luckyPowerAddr) external onlyAdmin {
+        require(_luckyPowerAddr != address(0), "Zero");
+        luckyPower = ILuckyPower(_luckyPowerAddr);
+        emit SetLuckyPower(block.number, _luckyPowerAddr);
+    }
+
+    // Update the lucky power.
+    function setBetMining(address _betMiningAddr) external onlyAdmin {
         require(_betMiningAddr != address(0), "Zero");
         betMining = IBetMining(_betMiningAddr);
         emit SetBetMining(block.number, _betMiningAddr);
