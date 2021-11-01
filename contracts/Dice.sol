@@ -278,7 +278,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
     }
 
     // bet number
-    function betNumber(bool[6] calldata numbers, uint256 amount) external payable whenNotPaused notContract nonReentrant {
+    function betNumber(bool[6] calldata numbers, uint256 amount, address referrer) external payable whenNotPaused notContract nonReentrant {
         Round storage round = rounds[currentEpoch];
         require(msg.value >= feeAmount, "FeeAmount");
         require(round.status == Status.Open, "Not Open");
@@ -333,7 +333,7 @@ contract Dice is IDice, Ownable, ReentrancyGuard, Pausable {
         userRounds[msg.sender].push(currentEpoch);
 
         if(address(betMining) != address(0)){
-            betMining.bet(msg.sender, address(token), amount);
+            betMining.bet(msg.sender, referrer, address(token), amount);
         }
 
         if(address(luckyPower) != address(0)){
